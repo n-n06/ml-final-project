@@ -10,3 +10,9 @@ wheels/
 .venv
 
 .env
+
+# Temp data storage
+data/
+
+# Logs
+*.log
