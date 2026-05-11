@@ -2,7 +2,6 @@ FROM apache/airflow:2.10.3-python3.11
 
 USER root
 
-# system deps for confluent-kafka
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     librdkafka-dev \
@@ -10,10 +9,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 USER airflow
 
-# install Airflow providers + our ingestion deps
-COPY airflow/requirements-airflow.txt /requirements-airflow.txt
-RUN pip install --no-cache-dir -r /requirements-airflow.txt
+# Install additional Python deps
+COPY --chown=airflow:airflow airflow/requirements-airflow.txt /requirements-airflow.txt
 
-# copy ingestion package so DAGs can import it
+RUN pip install --no-cache-dir \
+    --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.10.3/constraints-3.11.txt" \
+    -r /requirements-airflow.txt
+
+# Copy your ingestion package
 COPY --chown=airflow:root ingestion /opt/airflow/ingestion
-ENV PYTHONPATH=/opt/airflow:${PYTHONPATH}
+
+
+ENV PYTHONPATH=/opt/airflow:/home/airflow/.local/lib/python3.11/site-packages
+
