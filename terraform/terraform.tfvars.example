@@ -1,0 +1,16 @@
+
+azure_subscription_id = "SUBSCRIPTION-ID"
+
+project_name = "flightdelay"
+environment  = "dev"
+location     = "westeurope"
+
+tags = {
+  project    = "flight-delay-prediction"
+  managed_by = "terraform"
+  owner      = "max-and-nurs"
+}
+
+admin_object_ids = [
+  "AZURE-AD-OBJECT-ID",
+]
