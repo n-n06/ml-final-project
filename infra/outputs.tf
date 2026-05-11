@@ -6,6 +6,11 @@ output "storage_account_name" {
   value = module.storage.name
 }
 
+output "storage_account_primary_key" {
+  value     = module.storage.primary_access_key
+  sensitive = true
+}
+
 output "data_lake_url" {
   value = module.storage.primary_dfs_endpoint
 }
