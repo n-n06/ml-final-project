@@ -22,14 +22,11 @@ class AviationEdgeConfig:
 
 @dataclass(frozen=True)
 class KafkaConfig:
-    # For Azure Event Hubs, use: "<namespace>.servicebus.windows.net:9093"
-    bootstrap_servers: str = os.getenv(
-        "KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"
-    )
+    bootstrap_servers: str = os.environ["KAFKA_BOOTSTRAP_SERVERS"]
     security_protocol: str = os.environ["KAFKA_SECURITY_PROTOCOL"]
-    sasl_mechanism: str = os.getenv("KAFKA_SASL_MECHANISM", "")
-    sasl_username: str = os.getenv("KAFKA_SASL_USERNAME", "")
-    sasl_password: str = os.getenv("KAFKA_SASL_PASSWORD", "")
+    sasl_mechanism: str = os.environ["KAFKA_SASL_MECHANISM"]
+    sasl_username: str = "$ConnectionString"
+    sasl_password: str = os.environ["KAFKA_SASL_PASSWORD"]
 
     # Topic names
     flights_topic: str = os.environ["KAFKA_TOPIC_FLIGHTS"]
@@ -37,11 +34,10 @@ class KafkaConfig:
     notams_topic: str = os.environ["KAFKA_TOPIC_NOTAMS"]
 
     # Producer tuning
-    acks: str = "all"
-    linger_ms: int = 100
-    compression_type: str = "gzip"
+    acks: int = 1
+    linger_ms: int = 5
+    compression_type: str = "none"
     max_in_flight_requests_per_connection: int = 5
-    enable_idempotence: bool = True
 
 
 @dataclass(frozen=True)
@@ -60,7 +56,7 @@ class CollectionConfig:
 
     # date range for the historical backfill
     start_date: date = date(2026, 4, 10)
-    end_date: date = date(2026, 4, 11)
+    end_date: date = date(2026, 5, 10)
     # end_date: date = date(2026, 5, 8)
     chunk_size_days: int = 7
 

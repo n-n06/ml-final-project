@@ -1,7 +1,6 @@
 """
 Static airport reference data ingestion.
 Downloads OurAirports.com CSV and uploads to ADLS bronze.
-Run this ONCE, not on a schedule.
 """
 
 import logging
@@ -30,7 +29,7 @@ def download_airports_csv() -> Path:
     resp.raise_for_status()
 
     output_path.write_bytes(resp.content)
-    logger.info("Saved %d bytes → %s", len(resp.content), output_path)
+    logger.info("Saved %d bytes => %s", len(resp.content), output_path)
     return output_path
 
 
@@ -42,8 +41,7 @@ def main() -> None:
     config = get_config()
     download_airports_csv()
     logger.info(
-        "Next step: upload this CSV to ADLS bronze/airports/ "
-        "(use azcopy or az storage blob upload)"
+        "Downloaded airports.csv from OurAirports.com"
     )
 
 

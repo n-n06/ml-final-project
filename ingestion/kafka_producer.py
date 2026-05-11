@@ -31,10 +31,10 @@ class JsonKafkaProducer:
             "acks": self._config.acks,
             "linger.ms": self._config.linger_ms,
             "compression.type": self._config.compression_type,
-            "enable.idempotence": self._config.enable_idempotence,
             "max.in.flight.requests.per.connection": (
                 self._config.max_in_flight_requests_per_connection
             ),
+            "message.max.bytes": 900000 
         }
 
         if self._config.sasl_mechanism:
