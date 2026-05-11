@@ -59,8 +59,8 @@ class CollectionConfig:
     flight_types: tuple[str, ...] = ("departure", "arrival")
 
     # date range for the historical backfill
-    start_date: date = date(2026, 4, 8)
-    end_date: date = date(2026, 4, 9)
+    start_date: date = date(2026, 4, 10)
+    end_date: date = date(2026, 4, 11)
     # end_date: date = date(2026, 5, 8)
     chunk_size_days: int = 7
 

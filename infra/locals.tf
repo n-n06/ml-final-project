@@ -6,7 +6,6 @@ locals {
     "-", ""
   )
 
-  key_vault_name       = "${local.name_prefix}-kv-${random_string.suffix.result}"
   container_registry_name = replace("${local.name_prefix}acr${random_string.suffix.result}", "-", "")
   event_hubs_namespace = "${local.name_prefix}-eh-${random_string.suffix.result}"
 

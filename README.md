@@ -16,3 +16,22 @@ docker compose -f docker/docker-compose.kafka.yml down -v
 
 Infra setup
 az login
+az create rg for tfstate
+az register provider for storage
+az create stacc
+az create cont
+
+terraform init -backend-config=backend.hcl
+
+register everything else
+
+az provider register --namespace Microsoft.Storage
+az provider register --namespace Microsoft.KeyVault
+az provider register --namespace Microsoft.EventHub
+az provider register --namespace Microsoft.Databricks
+az provider register --namespace Microsoft.ContainerRegistry
+az provider register --namespace Microsoft.ManagedIdentity
+az provider register --namespace Microsoft.Network
+az provider register --namespace Microsoft.Compute
+az provider register --namespace Microsoft.Resources
+az provider register --namespace Microsoft.Authorization

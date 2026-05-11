@@ -11,6 +11,9 @@ provider "azurerm" {
   }
 
   subscription_id = var.azure_subscription_id
+  
+  # skip provider registration
+  resource_provider_registrations = "none"
 }
 
 provider "azuread" {}

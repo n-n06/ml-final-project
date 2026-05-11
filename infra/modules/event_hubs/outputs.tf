@@ -11,8 +11,13 @@ output "kafka_endpoint" {
   value       = "${azurerm_eventhub_namespace.this.name}.servicebus.windows.net:9093"
 }
 
-output "connection_string" {
+output "producer_connection_string" {
   value     = azurerm_eventhub_namespace_authorization_rule.producer.primary_connection_string
+  sensitive = true
+}
+
+output "consumer_connection_string" {
+  value     = azurerm_eventhub_namespace_authorization_rule.consumer.primary_connection_string
   sensitive = true
 }
 

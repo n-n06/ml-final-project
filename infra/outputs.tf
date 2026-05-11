@@ -19,13 +19,14 @@ output "event_hubs_kafka_endpoint" {
   value       = module.event_hubs.kafka_endpoint
 }
 
-output "event_hubs_connection_string" {
-  value     = module.event_hubs.connection_string
+output "event_hubs_producer_connection_string" {
+  value     = module.event_hubs.producer_connection_string
   sensitive = true
 }
 
-output "key_vault_uri" {
-  value = module.key_vault.uri
+output "event_hubs_consumer_connection_string" {
+  value     = module.event_hubs.consumer_connection_string
+  sensitive = true
 }
 
 output "databricks_workspace_url" {

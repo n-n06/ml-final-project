@@ -9,8 +9,10 @@ crash.*.log
 
 # Variable files containing secrets
 terraform.tfvars
+backend.tfvars
 *.auto.tfvars
 !*.example
+backend.hcl
 
 # Lock files (opinion — some teams commit these)
 .terraform.lock.hcl
@@ -31,3 +33,4 @@ terraform.rc
 
 # Plan output
 *.tfplan
+*.plan

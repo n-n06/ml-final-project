@@ -1,3 +1,4 @@
+
 variable "azure_subscription_id" {
   description = "Azure subscription ID"
   type        = string
@@ -64,7 +65,7 @@ variable "event_hubs_sku" {
 }
 
 variable "event_hubs_capacity" {
-  description = "Throughput units (1 is plenty for this project)"
+  description = "Throughput units"
   type        = number
   default     = 1
 }
@@ -96,19 +97,19 @@ variable "event_hub_topics" {
 variable "databricks_sku" {
   description = "Databricks workspace tier"
   type        = string
-  default     = "standard" 
+  default     = "premium" 
 }
 
 
 
 variable "aviation_edge_api_key" {
-  description = "Aviation Edge API key — from secrets.auto.tfvars"
+  description = "Aviation Edge API key"
   type        = string
   sensitive   = true
 }
 
 variable "open_meteo_api_key" {
-  description = "Open-Meteo key (optional, free tier needs none)"
+  description = "Open-Meteo key (optional)"
   type        = string
   sensitive   = true
   default     = ""
@@ -119,4 +120,10 @@ variable "admin_object_ids" {
   description = "Azure AD object IDs of users who get admin access to resources"
   type        = list(string)
   default     = []
+}
+
+variable "tfstate_storage_acc_key" {
+  description = "Storage Account key for Terraform State store"
+  type        = string
+  sensitive   = true
 }

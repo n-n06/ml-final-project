@@ -1,3 +1,9 @@
+terraform {
+  backend "azurerm" {
+  }
+}
+
+# Main resource group
 module "resource_group" {
   source = "./modules/resource_group"
 
@@ -6,23 +12,8 @@ module "resource_group" {
   tags     = local.tags
 }
 
-module "key_vault" {
-  source = "./modules/key_vault"
 
-  name                = local.key_vault_name
-  resource_group_name = module.resource_group.name
-  location            = var.location
-  tags                = local.tags
-  admin_object_ids    = var.admin_object_ids
-
-  secrets = {
-    "aviation-edge-api-key" = var.aviation_edge_api_key
-    # "open-meteo-api-key"    = var.open_meteo_api_key
-  }
-}
-
-
-
+# ADLS storage
 module "storage" {
   source = "./modules/storage"
 
@@ -36,7 +27,7 @@ module "storage" {
 }
 
 
-
+# event hub - Kafka compatible
 module "event_hubs" {
   source = "./modules/event_hubs"
 
@@ -47,11 +38,10 @@ module "event_hubs" {
   sku                 = var.event_hubs_sku
   capacity            = var.event_hubs_capacity
   topics              = var.event_hub_topics
-  key_vault_id        = module.key_vault.id
 }
 
 
-
+# container registry - to be used with Docker
 module "container_registry" {
   source = "./modules/container_registry"
 
@@ -62,7 +52,7 @@ module "container_registry" {
 }
 
 
-
+# databricks cluster - to run spark transformation
 module "databricks" {
   source = "./modules/databricks"
 
