@@ -1,12 +1,12 @@
 # Flight Delay Prediction
 
-End-to-end flight delay prediction project with offline data ingestion, feature engineering, ML notebooks, and planned FastAPI inference over prepared features.
+End-to-end flight delay prediction project with offline data ingestion, feature engineering, ML notebooks, and FastAPI inference over prepared features.
 
 The current project is split into three layers:
 
 - **Data engineering / offline pipeline**: ingestion from aviation APIs, Kafka/Event Hubs, Postgres bronze/silver/gold tables, Airflow DAGs, Terraform for Azure infrastructure.
 - **ML layer**: EDA, cleaned modeling dataset, classifier for `P(delay > 15 minutes)`, and conditional delay-duration regressor.
-- **Inference layer**: planned FastAPI service over precomputed features from `data/flight_features_cleaned_for_modeling.csv`.
+- **Inference layer**: FastAPI service over precomputed features from `data/flight_features_cleaned_for_modeling.csv`.
 
 ## Repository Layout
 
@@ -302,11 +302,17 @@ az eventhubs namespace authorization-rule keys list \
   -o tsv
 ```
 
-## Planned FastAPI Inference Layer
+## FastAPI Inference Layer
 
-The API should be implemented over prepared features, not live external API calls.
+The API runs inference over prepared features from:
 
-Planned endpoints:
+```text
+data/flight_features_cleaned_for_modeling.csv
+```
+
+It does not call Flightradar, OpenWeather, or NOTAM APIs at request time. Those sources belong to the offline/preprocessing layer; real-time ingestion is future work.
+
+Implemented endpoints:
 
 - `GET /health`
 - `GET /model-info`
@@ -317,15 +323,12 @@ Planned endpoints:
 - `POST /alerts`
 - `GET /alerts`
 
-When the API is added, add its dependencies through uv:
+API dependencies are declared in `pyproject.toml` and locked in `uv.lock`. There is still no root `requirements.txt`.
+
+Run the API with uv:
 
 ```powershell
-uv add fastapi uvicorn pydantic
-```
-
-Then run:
-
-```powershell
+uv sync
 uv run uvicorn app.main:app --reload
 ```
 
@@ -333,6 +336,61 @@ Docs:
 
 ```text
 http://127.0.0.1:8000/docs
+```
+
+Example `/predict` request using real columns from the cleaned dataset:
+
+```powershell
+curl -X POST "http://127.0.0.1:8000/predict" `
+  -H "Content-Type: application/json" `
+  -d '{
+    "features": {
+      "is_weekend": 0,
+      "dep_latitude": 55.976858,
+      "dep_longitude": 37.41121,
+      "dep_elevation_ft": 622.0,
+      "arr_latitude": 43.354267,
+      "arr_longitude": 77.042828,
+      "arr_elevation_ft": 2234.0,
+      "route_distance_km": 3121.94,
+      "is_domestic": 0,
+      "is_international": 1,
+      "notam_count_dep": 0,
+      "notam_count_arr": 0.0,
+      "dep_iata_grp": "SVO",
+      "arr_iata_grp": "ALA",
+      "airline_iata_grp": "SU",
+      "route_grp": "SVO_ALA",
+      "dep_iso_country_grp": "RU",
+      "arr_iso_country_grp": "KZ"
+    }
+  }'
+```
+
+Example response shape:
+
+```json
+{
+  "delay_probability": 0.74,
+  "threshold": 0.365,
+  "is_delayed": true,
+  "prediction_label": "delayed",
+  "risk_level": "high",
+  "predicted_delay_minutes_if_delayed": 38.5,
+  "top_factors": ["international flight", "long route distance"]
+}
+```
+
+Search demo flights from the prepared dataset:
+
+```powershell
+curl "http://127.0.0.1:8000/flights/search?dep_iata=SVO&arr_iata=ALA&limit=5"
+```
+
+Run prediction for a row returned by search:
+
+```powershell
+curl "http://127.0.0.1:8000/flights/0/predict"
 ```
 
 ## Project Status
@@ -346,10 +404,10 @@ Implemented:
 - EDA notebook and cleaned modeling dataset.
 - Binary classifier training notebook.
 - Conditional regressor / two-stage evaluation notebook.
+- FastAPI inference service over prepared features.
 
 Not yet implemented:
 
-- Production FastAPI inference service.
 - Real-time external API ingestion inside the backend.
-- Persistent alerting/notifications.
+- Production alerting/notifications. Current alerts are local demo JSON.
 - Full CI/test suite.
