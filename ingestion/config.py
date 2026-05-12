@@ -24,9 +24,6 @@ class AviationEdgeConfig:
 class KafkaConfig:
     bootstrap_servers: str = os.environ["KAFKA_BOOTSTRAP_SERVERS"]
     security_protocol: str = os.environ["KAFKA_SECURITY_PROTOCOL"]
-    sasl_mechanism: str = os.environ["KAFKA_SASL_MECHANISM"]
-    sasl_username: str = "$ConnectionString"
-    sasl_password: str = os.environ["KAFKA_SASL_PASSWORD"]
 
     # Topic names
     flights_topic: str = os.environ["KAFKA_TOPIC_FLIGHTS"]

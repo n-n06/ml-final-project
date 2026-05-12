@@ -17,8 +17,24 @@ OURAIRPORTS_URL = "https://davidmegginson.github.io/ourairports-data/airports.cs
 LOCAL_RAW_DIR = Path("data/raw/airports")
 
 
-def download_airports_csv() -> Path:
+def setup_logging(config: Config) -> None:
+    config.logging.log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = config.logging.log_dir / "ingestion_flights.log"
+
+    logging.basicConfig(
+        level=config.logging.level,
+        format=config.logging.format,
+        handlers=[
+            logging.FileHandler(log_path),
+            logging.StreamHandler(),
+        ],
+    )
+
+
+def download_airports_csv(config: Config) -> dict:
     """Download airports.csv from OurAirports.com to local disk."""
+
+
     LOCAL_RAW_DIR.mkdir(parents=True, exist_ok=True)
     
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -29,20 +45,21 @@ def download_airports_csv() -> Path:
     resp.raise_for_status()
 
     output_path.write_bytes(resp.content)
-    logger.info("Saved %d bytes => %s", len(resp.content), output_path)
-    return output_path
-
-
-def main() -> None:
-    logging.basicConfig(
-        level="INFO",
-        format="%(asctime)s | %(levelname)-8s | %(message)s",
-    )
-    config = get_config()
-    download_airports_csv()
     logger.info(
         "Downloaded airports.csv from OurAirports.com"
     )
+    logger.info("Saved %d bytes => %s", len(resp.content), output_path)
+    return {
+        "output_path": str(output_path),
+        "size_bytes": len(resp.content)
+    }
+
+
+def main() -> None:
+    config = get_config()
+    setup_logging(config)
+    config.validate()
+    download_airports_csv(config)
 
 
 if __name__ == "__main__":

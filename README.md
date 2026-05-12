@@ -35,3 +35,16 @@ az provider register --namespace Microsoft.Network
 az provider register --namespace Microsoft.Compute
 az provider register --namespace Microsoft.Resources
 az provider register --namespace Microsoft.Authorization
+
+terraform plan -out=terraform.tfplan
+terraform apply "terraform.tfplan"
+
+
+az eventhubs namespace authorization-rule keys list \
+  --resource-group flightdelay-dev-rg \
+  --namespace-name flightdelay-dev-eh-krd5 \
+  --name RootManageSharedAccessKey \
+  --query primaryConnectionString \
+  -o tsv
+
+get the thing

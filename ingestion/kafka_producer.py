@@ -37,12 +37,6 @@ class JsonKafkaProducer:
             "message.max.bytes": 900000 
         }
 
-        if self._config.sasl_mechanism:
-            producer_config.update({
-                "sasl.mechanism": self._config.sasl_mechanism,
-                "sasl.username": self._config.sasl_username,
-                "sasl.password": self._config.sasl_password,
-            })
 
         logger.info(
             "Building Kafka producer for %s (topic=%s, protocol=%s)",

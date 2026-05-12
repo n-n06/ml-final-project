@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 def setup_logging(config: Config) -> None:
     config.logging.log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = config.logging.log_dir / config.logging.log_file
+    log_path = config.logging.log_dir / "ingestion_flights.log"
 
     logging.basicConfig(
         level=config.logging.level,
@@ -70,10 +70,16 @@ def enrich_record(
     }
 
 
-def run_ingestion(config: Config) -> None:
+def run_ingestion(config: Config) -> dict:
     """
-    Run ingestion loop: iterate airports X directions X date chunks.
+    Runs Ingestion of flights into Kafka cluster from AviationEdge.
+    Main loop: airports X directions X date chunks 
+    
+    Returns:
+        stats: dict - ingestion statistics
     """
+
+
     client = AviationEdgeClient(config.aviation_edge)
     producer = JsonKafkaProducer(config.kafka, config.kafka.flights_topic)
 
@@ -140,6 +146,13 @@ def run_ingestion(config: Config) -> None:
     logger.info("Delivered: %d", producer.stats["delivered"])
     logger.info("Failed:    %d", producer.stats["failed"])
     logger.info("=" * 70)
+
+    stats = {
+        "produced": total_produced,
+        "delivered": producer.stats["delivered"],
+        "failed": producer.stats["failed"],
+    }
+    return stats
 
 
 def main() -> None:

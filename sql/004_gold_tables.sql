@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS gold.flight_features (
 
     -- target
     dep_delay_min           INTEGER,    -- NULL = not yet known
-    is_delayed              BOOLEAN     -- dep_delay_min > 15
+    is_delayed              BOOLEAN,     -- dep_delay_min > 15
 
     -- temporal features
     hour_of_day             SMALLINT,
@@ -67,6 +67,13 @@ CREATE TABLE IF NOT EXISTS gold.flight_features (
 
     notam_max_hours_dep         DOUBLE PRECISION,   -- longest active NOTAM duration at dep
     notam_max_hours_arr         DOUBLE PRECISION,
+
+    -- deparatur and arrival airport presence / absence
+    dep_notams_available        BOOLEAN     DEFAULT TRUE,
+    arr_notams_available        BOOLEAN     DEFAULT FALSE,
+
+    flights_dep_same_hour       INTEGER     DEFAULT 0,
+    flights_arr_same_hour       INTEGER     DEFAULT 0,
 
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
 

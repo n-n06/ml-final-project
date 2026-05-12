@@ -42,18 +42,17 @@ class JsonKafkaConsumer:
             "bootstrap.servers": self._config.bootstrap_servers,
             "security.protocol": self._config.security_protocol,
             "group.id": self._group_id,
+            "client.id": self._group_id,
+
+            "enable.auto.commit": False,
+            "enable.auto.offset.store": False,
+
             "auto.offset.reset": self._auto_offset_reset,
-            "enable.auto.commit": self._enable_auto_commit,
-            "fetch.max.bytes": 900_000,
-            "max.partition.fetch.bytes": 900_000,
+
+            "request.timeout.ms": 30000,
+            "session.timeout.ms": 30000,
         }
 
-        if self._config.sasl_mechanism:
-            consumer_config.update({
-                "sasl.mechanism": self._config.sasl_mechanism,
-                "sasl.username": self._config.sasl_username,
-                "sasl.password": self._config.sasl_password,
-            })
 
         logger.info(
             "Building Kafka consumer for %s (topic=%s, group=%s, protocol=%s)",
@@ -62,6 +61,7 @@ class JsonKafkaConsumer:
             self._group_id,
             self._config.security_protocol,
         )
+        logger.info(consumer_config)
 
         consumer = Consumer(consumer_config)
         consumer.subscribe([self._topic])
@@ -133,6 +133,8 @@ class JsonKafkaConsumer:
             record = self._deserialize(msg)
 
             if record is not None:
+                self._consumer.store_offsets(msg)
+
                 self._consumed += 1
                 batch.append(record)
 

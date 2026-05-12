@@ -60,7 +60,16 @@ def enrich_record(
     }
 
 
-def run_ingestion(config: Config) -> None:
+def run_ingestion(config: Config) -> dict:
+    """
+    Runs Ingestion of NOTAMS into Kafka cluster
+    From the AviationEdge API
+    
+    Returns:
+        stats: dict - ingestion statistics
+    """
+
+
     # run main loop: iterate airports X date chunks
     client = AviationEdgeNotamClient(config.aviation_edge)
     producer = JsonKafkaProducer(config.kafka, config.kafka.notams_topic)
@@ -119,8 +128,16 @@ def run_ingestion(config: Config) -> None:
     logger.info("Failed:    %d", producer.stats["failed"])
     logger.info("=" * 70)
 
+    stats = {
+        "produced": total_produced,
+        "delivered": producer.stats["delivered"],
+        "failed": producer.stats["failed"],
+    }
+    return stats
+
 
 def main() -> None:
+    # for testing 
     config = get_config()
     setup_logging(config)
     config.validate()
