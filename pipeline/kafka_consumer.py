@@ -1,6 +1,6 @@
 """
 Generic Kafka consumer for JSON records.
-Reused by all bronze loaders (flights, NOTAMs, airports, etc.)
+Reused by all bronze loaders (flights, NOTAMs, airports)
 """
 
 import json
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class JsonKafkaConsumer:
     """
-    Generic JSON consumer from Kafka / Event Hubs
+    Generic JSON consumer from Kafka
     """
 
     def __init__(
@@ -95,6 +95,9 @@ class JsonKafkaConsumer:
         consecutive polls return nothing). Designed for Airflow tasks
         that drain the topic on a schedule, not infinite streaming.
 
+        Yeilds:
+            list[dict] - list of Kafka messages
+
         Usage:
             for batch in consumer.consume_batch(batch_size=500):
                 write_to_db(batch)
@@ -131,7 +134,8 @@ class JsonKafkaConsumer:
 
             empty_polls = 0
             record = self._deserialize(msg)
-
+            
+            # manual offset commit after DB write
             if record is not None:
                 self._consumer.store_offsets(msg)
 

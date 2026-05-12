@@ -50,7 +50,7 @@ _UPSERT_SQL = text("""
 """)
 
 
-def _transform_batch(rows: list[dict]) -> pd.DataFrame:
+def _transform_batch(rows: list[dict]):
     df = pd.DataFrame(rows)
 
     # Filter: must have IATA code and be an operationally relevant type
@@ -63,8 +63,7 @@ def _transform_batch(rows: list[dict]) -> pd.DataFrame:
     # Cast numeric columns, coerce errors to NaN => None
     df["latitude_deg"]  = pd.to_numeric(df["latitude_deg"],  errors="coerce")
     df["longitude_deg"] = pd.to_numeric(df["longitude_deg"], errors="coerce")
-    df["elevation_ft"]  = pd.to_numeric(df["elevation_ft"],  errors="coerce")\
-                            .astype("Int64")  # nullable integer
+    df["elevation_ft"]  = pd.to_numeric(df["elevation_ft"],  errors="coerce").astype("Int64")  
 
     # Normalize boolean
     df["scheduled_service"] = df["scheduled_service"].str.strip().str.lower() == "yes"

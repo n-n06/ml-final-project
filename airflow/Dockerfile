@@ -7,7 +7,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     librdkafka-dev \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-RUN apt-get update && apt-get install -y ca-certificates
 
 USER airflow
 

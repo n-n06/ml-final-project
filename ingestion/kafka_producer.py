@@ -1,6 +1,6 @@
 """
 Generic Kafka producer for JSON records.
-Reused by all ingestion pipelines (flights, NOTAMs, weather, etc.)
+Reused by all ingestion pipelines (flights, NOTAMs)
 """
 
 import json
@@ -15,7 +15,9 @@ logger = logging.getLogger(__name__)
 
 
 class JsonKafkaProducer:
-    """Generic JSON producer to Kafka / Event Hubs."""
+    """
+    Generic JSON producer to Kafka
+    """
 
     def __init__(self, config: KafkaConfig, topic: str):
         self._config = config
@@ -36,7 +38,6 @@ class JsonKafkaProducer:
             ),
             "message.max.bytes": 900000 
         }
-
 
         logger.info(
             "Building Kafka producer for %s (topic=%s, protocol=%s)",

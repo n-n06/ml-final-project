@@ -14,9 +14,7 @@ from lib.pipeline_tasks import (
 )
 
 _DEFAULT_ARGS = {
-    "retries": 2,
-    "retry_delay": timedelta(minutes=5),
-    "retry_exponential_backoff": True,
+    "owner": "nurs"
 }
 
 

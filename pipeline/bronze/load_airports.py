@@ -25,7 +25,7 @@ _ALREADY_LOADED_SQL = text("""
 def load_airports_to_bronze(csv_path: Path) -> dict[str, int]:
     """
     Load an OurAirports CSV snapshot into bronze.airports_raw.
-    Idempotent: skips the file if it was already loaded (checked by source_file).
+    Skips the file if it was already loaded (checked by source_file).
     To be called directly from an Airflow PythonOperator task.
 
     Return:

@@ -69,7 +69,6 @@ def run_ingestion(config: Config) -> dict:
         stats: dict - ingestion statistics
     """
 
-
     # run main loop: iterate airports X date chunks
     client = AviationEdgeNotamClient(config.aviation_edge)
     producer = JsonKafkaProducer(config.kafka, config.kafka.notams_topic)

@@ -15,13 +15,14 @@ class AviationEdgeConfig:
     flights_history_endpoint: str = "/flightsHistory"
     notams_endpoint: str = "/notams"   
     request_timeout_sec: int = 120
-    request_delay_sec: float = 1.5
+    request_delay_sec: float = 0.5
     max_retries: int = 5
     retry_backoff_factor: float = 2.0
 
 
 @dataclass(frozen=True)
 class KafkaConfig:
+    # basic settings for local Kafka
     bootstrap_servers: str = os.environ["KAFKA_BOOTSTRAP_SERVERS"]
     security_protocol: str = os.environ["KAFKA_SECURITY_PROTOCOL"]
 
@@ -31,7 +32,7 @@ class KafkaConfig:
     notams_topic: str = os.environ["KAFKA_TOPIC_NOTAMS"]
 
     # Producer tuning
-    acks: int = 1
+    acks: str = "all"
     linger_ms: int = 5
     compression_type: str = "none"
     max_in_flight_requests_per_connection: int = 5
@@ -54,7 +55,6 @@ class CollectionConfig:
     # date range for the historical backfill
     start_date: date = date(2026, 4, 10)
     end_date: date = date(2026, 5, 10)
-    # end_date: date = date(2026, 5, 8)
     chunk_size_days: int = 7
 
 
@@ -92,5 +92,7 @@ class Config:
 
 
 def get_config() -> Config:
-    """Return a fresh Config instance (reads env vars each call)."""
+    """
+    Return a fresh Config instance (reads env vars each call)
+    """
     return Config()
