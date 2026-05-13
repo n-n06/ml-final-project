@@ -12,6 +12,7 @@ The current project is split into three layers:
 
 ```text
 airflow/                  Airflow image, DAGs, and Airflow-only requirements
+app/                      FastAPI inference service
 data/                     Generated ML datasets, metrics, and reports
 ingestion/                API ingestion and Kafka producer code
 media/                    Generated EDA/training plots
@@ -21,6 +22,7 @@ pipeline/                 Bronze/silver/gold loading and feature building code
 sql/                      Postgres schema/table DDL
 terraform/                Azure infrastructure modules
 docker-compose.yml        Local Postgres, Airflow, and Kafka stack
+flight_features.csv       Current local feature export used by notebooks
 pyproject.toml            Main project dependencies for uv
 uv.lock                   Locked dependency graph for reproducible local env
 ```
@@ -35,7 +37,8 @@ Canonical dependency files:
 - `uv.lock`: locks exact resolved versions.
 - `airflow/requirements-airflow.txt`: separate dependency list used only inside the Airflow Docker image.
 
-There is intentionally no root `requirements.txt`. Adding one would create a second dependency source and can drift from `uv.lock`.
+There is intentionally no root `requirements.txt`. Adding one would create a
+second dependency source and can drift from `uv.lock`.
 MLflow tracking is provided through `mlflow-skinny`, which keeps the training
 environment compatible with the project's current `pandas` version while still
 supporting experiment tracking and artifact logging.
@@ -69,9 +72,13 @@ It is used by `airflow/Dockerfile` with Apache Airflow constraints. Keep Airflow
 
 ## Important Environment Rule
 
-Use one Python environment consistently for model training and API inference.
+Use one Python environment consistently for model training, MLflow model
+registration, and API inference.
 
-`joblib` model artifacts are not guaranteed to load across incompatible `scikit-learn` versions. If `models/flight_delay_classifier.joblib` fails to load, rerun the training notebook in the same environment that will run inference.
+FastAPI loads models from MLflow by default, but the serialized scikit-learn
+pipeline still must be compatible with the runtime. If MLflow model loading fails
+with a dependency or pickle error, retrain/register the models in the same
+environment that will run inference.
 
 Recommended flow:
 
@@ -80,7 +87,8 @@ uv sync
 uv run python -c "import sklearn; print(sklearn.__version__)"
 ```
 
-Then use the same environment/kernel for notebooks and backend.
+Then use the same environment/kernel for notebooks, CLI training, registration,
+and backend inference.
 
 ## Current ML Workflow
 
@@ -92,7 +100,13 @@ Notebook:
 notebooks/01_eda.ipynb
 ```
 
-Creates a local exploratory output:
+The notebook reads the current local export:
+
+```text
+flight_features.csv
+```
+
+and creates an exploratory modeling dataset:
 
 ```text
 data/flight_features_cleaned_for_modeling.csv
@@ -138,6 +152,10 @@ data/02_*.csv
 media/training/02_*.png
 ```
 
+The notebook saves the best selected classifier locally. To make FastAPI use
+that exact notebook artifact, register it in MLflow after running notebook `03`
+with the command shown below.
+
 ### 3. Conditional Delay Regressor and Two-Stage Evaluation
 
 Notebook:
@@ -164,10 +182,30 @@ data/03_*.csv
 media/training/03_*.png
 ```
 
+After running notebooks `02` and `03`, publish the selected local artifacts to
+the MLflow registry used by FastAPI:
+
+```powershell
+uv run python -m training.register_models
+```
+
+This registers the current `models/flight_delay_classifier.joblib` and
+`models/flight_delay_regressor.joblib` as latest versions of:
+
+```text
+flight_delay_classifier
+flight_delay_regressor
+```
+
+It also updates the local metadata JSON files with the registered MLflow model
+URIs. Without this step, FastAPI will keep serving the previous registered
+MLflow versions even if the notebooks produced newer local `models/*.joblib`
+files.
+
 ### CLI Retraining
 
-Notebook code is useful for exploration, but repeatable retraining should use the
-CLI entrypoints in `training/`.
+Notebook code is useful for exploration, but repeatable retraining should use
+the CLI entrypoints in `training/`.
 
 By default the CLI reads already-cleaned training rows directly from Postgres:
 
@@ -215,11 +253,18 @@ data/03_two_stage_metrics.csv
 ```
 
 MLflow is enabled by default. Runs log params, metrics, metadata JSON files, CSV
-metrics, model artifacts, and register the active best models as:
+metrics, model artifacts, and register the selected models as:
 
 ```text
 flight_delay_classifier
 flight_delay_regressor
+```
+
+The CLI registers models automatically. The notebook flow saves local artifacts
+first and then requires:
+
+```powershell
+uv run python -m training.register_models
 ```
 
 If `MLFLOW_TRACKING_URI` is not set, local runs are written under:
@@ -227,6 +272,10 @@ If `MLFLOW_TRACKING_URI` is not set, local runs are written under:
 ```text
 mlruns/
 ```
+
+`mlruns/` is intentionally gitignored. For team or deployed inference, point
+`MLFLOW_TRACKING_URI` at a shared/persistent backend, or rerun training /
+`training.register_models` in the target environment.
 
 Use a custom tracking backend:
 
@@ -252,9 +301,8 @@ uv run python -m training.train_all `
   --no-mlflow
 ```
 
-The default CLI uses the tuned Random Forest hyperparameters from the saved
-artifacts and stores the active `scikit-learn` version in metadata, so API
-inference can detect environment drift.
+The default CLI uses the same feature preparation and threshold-tuning logic as
+the notebooks and stores the active `scikit-learn` version in metadata.
 
 ## Feature Leakage Rules
 
@@ -328,6 +376,21 @@ docker compose up -d --build
 
 Airflow webserver uses the port configured by `AIRFLOW_PORT` in `.env`.
 
+### Airflow and FastAPI Contracts
+
+Airflow and FastAPI do not call each other directly. They communicate through
+shared storage:
+
+```text
+01_initial_backfill -> Postgres gold.flight_features_cleaned
+02_model_training   -> Postgres training read + MLflow model registry write
+FastAPI             -> Postgres feature read + MLflow model registry read
+```
+
+After Airflow refreshes `gold.flight_features_cleaned` or registers newer MLflow
+models, restart the FastAPI process so it reloads the table snapshot and model
+artifacts.
+
 ### Airflow Model Training DAG
 
 Model retraining is available as a separate manual DAG:
@@ -336,7 +399,9 @@ Model retraining is available as a separate manual DAG:
 02_model_training
 ```
 
-It does not change or depend on the ETL DAG. It runs:
+It does not run the ETL steps itself, but it depends on
+`gold.flight_features_cleaned` already existing from DAG `01_initial_backfill`.
+It runs:
 
 ```powershell
 python -m training.train_all
@@ -355,21 +420,9 @@ docker compose up -d --build airflow-webserver airflow-scheduler
 
 ## Data Engineering Notes
 
-The original data engineering notes are preserved below, cleaned up into commands.
-
 ### Kafka Setup (Local)
 
-Older notes referenced a separate Kafka compose file:
-
-```bash
-docker compose -f docker/docker-compose.kafka.yml up -d
-./scripts/create_topics.sh
-python3 -m ingestion.notams.ingest_notams
-python3 -m ingestion.flights.ingest_flights
-python3 -m ingestion.airports.ingest_airports
-```
-
-Current repository has Kafka in the root `docker-compose.yml`, so prefer:
+Kafka is defined in the root `docker-compose.yml`:
 
 ```powershell
 docker compose up -d kafka
@@ -386,24 +439,26 @@ docker compose down -v
 
 ### Azure / Terraform Infrastructure Setup
 
-Login and prepare Terraform state resources:
+Terraform configuration lives under `terraform/`. Copy the example variable files
+before applying and never commit real secrets:
 
 ```bash
 az login
-az create rg for tfstate
-az register provider for storage
-az create stacc
-az create cont
+cd terraform
+cp terraform.tfvars.example terraform.tfvars
+cp secrets.auto.tfvars.example secrets.auto.tfvars
 ```
 
-Initialize Terraform:
+Initialize, plan, and apply:
 
 ```bash
-cd terraform
-terraform init -backend-config=backend.hcl
+terraform init
+terraform plan -out=terraform.tfplan
+terraform apply "terraform.tfplan"
 ```
 
-Register Azure providers:
+If the Azure subscription has provider auto-registration disabled, register the
+providers used by this project:
 
 ```bash
 az provider register --namespace Microsoft.Storage
@@ -416,13 +471,6 @@ az provider register --namespace Microsoft.Network
 az provider register --namespace Microsoft.Compute
 az provider register --namespace Microsoft.Resources
 az provider register --namespace Microsoft.Authorization
-```
-
-Plan and apply:
-
-```bash
-terraform plan -out=terraform.tfplan
-terraform apply "terraform.tfplan"
 ```
 
 Fetch Event Hubs connection string:
@@ -441,16 +489,41 @@ az eventhubs namespace authorization-rule keys list \
 The API loads classifier/regressor artifacts from MLflow by default:
 
 ```text
+MODEL_ARTIFACT_SOURCE=mlflow
 MLFLOW_CLASSIFIER_MODEL_URI=models:/flight_delay_classifier/latest
 MLFLOW_REGRESSOR_MODEL_URI=models:/flight_delay_regressor/latest
 ```
+
+The default `latest` selector means inference uses the latest registered MLflow
+versions, not whichever local `models/*.joblib` files happen to exist. After
+running notebooks, run `uv run python -m training.register_models` so the latest
+registry versions match the notebook-selected best classifier and regressor.
+Allowed artifact source modes are `mlflow`, `local`, and `auto`; invalid values
+fall back to strict `mlflow` mode instead of silently loading local artifacts.
+
+For explicit pinning in production, set:
+
+```env
+MLFLOW_CLASSIFIER_MODEL_URI=models:/flight_delay_classifier/3
+MLFLOW_REGRESSOR_MODEL_URI=models:/flight_delay_regressor/3
+```
+
+For local debugging only, `MODEL_ARTIFACT_SOURCE=local` makes the service load
+`models/*.joblib` directly.
+
+When `MLFLOW_TRACKING_URI` is not set, the API looks for local `./mlruns`. This
+matches the Airflow volume mount in `docker-compose.yml`: the Airflow container
+writes to `/opt/airflow/mlruns`, which is mounted to the repository's `mlruns/`
+directory.
 
 `GET /flights/search` and `GET /flights/{row_id}/predict` read prepared features
 from Postgres table `gold.flight_features_cleaned` through `DATABASE_URL`; the
 API no longer depends on local cleaned CSV files. `POST /predict` accepts a
 feature payload directly and only needs the MLflow model artifacts.
 
-It does not call Flightradar, OpenWeather, or NOTAM APIs at request time. Those sources belong to the offline/preprocessing layer; real-time ingestion is future work.
+It does not call external aviation or NOTAM APIs at request time. Those sources
+belong to the offline/preprocessing layer; real-time serving ingestion is future
+work.
 
 Implemented endpoints:
 
@@ -465,7 +538,8 @@ Implemented endpoints:
 
 API dependencies are declared in `pyproject.toml` and locked in `uv.lock`. There is still no root `requirements.txt`.
 
-Run the API with uv:
+Run the API with uv. The API is not currently a separate service in
+`docker-compose.yml`; start it from the project environment:
 
 ```powershell
 uv sync
@@ -512,7 +586,7 @@ Example response shape:
 ```json
 {
   "delay_probability": 0.74,
-  "threshold": 0.365,
+  "threshold": 0.66,
   "is_delayed": true,
   "prediction_label": "delayed",
   "risk_level": "high",
@@ -539,15 +613,18 @@ Implemented:
 
 - Offline ingestion/pipeline code.
 - SQL schemas for bronze/silver/gold tables.
-- Airflow DAG for initial backfill.
+- Airflow DAG for initial backfill and cleaned gold materialization.
+- Airflow DAG for manual model retraining from Postgres.
 - Terraform modules for Azure resources.
 - EDA notebook and cleaned modeling dataset.
 - Binary classifier training notebook.
 - Conditional regressor / two-stage evaluation notebook.
-- FastAPI inference service over prepared features.
+- MLflow experiment tracking and registered classifier/regressor serving.
+- FastAPI inference service over Postgres prepared features.
 
 Not yet implemented:
 
 - Real-time external API ingestion inside the backend.
 - Production alerting/notifications. Current alerts are local demo JSON.
+- Automatic FastAPI model/table reload after Airflow refreshes data or models.
 - Full CI/test suite.
