@@ -41,6 +41,11 @@ GROUPED_CATEGORICAL_PAIRS = {
     "arr_iso_country": "arr_iso_country_grp",
 }
 
+DEFAULT_MODEL_ARTIFACT_SOURCE = "mlflow"
+VALID_MODEL_ARTIFACT_SOURCES = {"mlflow", "local", "auto"}
+DEFAULT_CLASSIFIER_MODEL_URI = "models:/flight_delay_classifier/latest"
+DEFAULT_REGRESSOR_MODEL_URI = "models:/flight_delay_regressor/latest"
+
 
 class ModelNotReadyError(RuntimeError):
     pass
@@ -57,16 +62,11 @@ class ModelService:
         self.classifier_metadata_path = self.models_dir / "flight_delay_classifier_metadata.json"
         self.regressor_metadata_path = self.models_dir / "flight_delay_regressor_metadata.json"
         self.two_stage_metadata_path = self.models_dir / "two_stage_model_metadata.json"
-        self.model_artifact_source = os.getenv("MODEL_ARTIFACT_SOURCE", "mlflow").strip().lower()
+        self.metadata_warnings: list[str] = []
+        self.model_artifact_source = self._resolve_model_artifact_source()
         self.mlflow_tracking_uri = self._resolve_mlflow_tracking_uri()
-        self.classifier_model_uri = os.getenv(
-            "MLFLOW_CLASSIFIER_MODEL_URI",
-            "models:/flight_delay_classifier/latest",
-        )
-        self.regressor_model_uri = os.getenv(
-            "MLFLOW_REGRESSOR_MODEL_URI",
-            "models:/flight_delay_regressor/latest",
-        )
+        self.classifier_model_uri = os.getenv("MLFLOW_CLASSIFIER_MODEL_URI", DEFAULT_CLASSIFIER_MODEL_URI)
+        self.regressor_model_uri = os.getenv("MLFLOW_REGRESSOR_MODEL_URI", DEFAULT_REGRESSOR_MODEL_URI)
 
         self.classifier: Any | None = None
         self.regressor: Any | None = None
@@ -75,7 +75,6 @@ class ModelService:
         self.two_stage_metadata: dict[str, Any] = {}
         self.classifier_error: str | None = None
         self.regressor_error: str | None = None
-        self.metadata_warnings: list[str] = []
 
         self._load_metadata()
         self._load_artifacts()
@@ -118,9 +117,15 @@ class ModelService:
             warnings.append(f"regressor: {self.regressor_error}")
 
         return {
+            "model_artifact_source_config": self.model_artifact_source,
+            "mlflow_tracking_uri": self.mlflow_tracking_uri,
             "selected_classifier_model": self.classifier_metadata.get("selected_model"),
             "classifier_loaded": self.classifier_loaded,
             "classifier_artifact_source": self.classifier_metadata.get("artifact_source"),
+            "classifier_requested_model_uri": self.classifier_metadata.get(
+                "requested_model_uri",
+                self.classifier_model_uri,
+            ),
             "classifier_model_uri": self.classifier_metadata.get("loaded_model_uri"),
             "classifier_threshold": self.classifier_threshold,
             "classifier_threshold_objective": self.classifier_metadata.get("threshold_objective"),
@@ -129,6 +134,10 @@ class ModelService:
             "selected_regressor_model": self.regressor_metadata.get("selected_model"),
             "regressor_loaded": self.regressor_loaded,
             "regressor_artifact_source": self.regressor_metadata.get("artifact_source"),
+            "regressor_requested_model_uri": self.regressor_metadata.get(
+                "requested_model_uri",
+                self.regressor_model_uri,
+            ),
             "regressor_model_uri": self.regressor_metadata.get("loaded_model_uri"),
             "regressor_expected_feature_columns": self.regressor_feature_columns,
             "target_definition": "delay > 15 minutes",
@@ -243,6 +252,17 @@ class ModelService:
         if self.regressor_loaded:
             self.regressor_metadata["artifact_source"] = "local"
             self.regressor_metadata["loaded_model_uri"] = str(self.regressor_path)
+
+    def _resolve_model_artifact_source(self) -> str:
+        value = os.getenv("MODEL_ARTIFACT_SOURCE", DEFAULT_MODEL_ARTIFACT_SOURCE).strip().lower()
+        if value in VALID_MODEL_ARTIFACT_SOURCES:
+            return value
+        self.metadata_warnings.append(
+            "Invalid MODEL_ARTIFACT_SOURCE="
+            f"{value!r}; using {DEFAULT_MODEL_ARTIFACT_SOURCE!r}. "
+            f"Allowed values: {', '.join(sorted(VALID_MODEL_ARTIFACT_SOURCES))}."
+        )
+        return DEFAULT_MODEL_ARTIFACT_SOURCE
 
     def _read_json(self, path: Path) -> dict[str, Any]:
         if not path.exists():
