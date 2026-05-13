@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import re
 import warnings
 from pathlib import Path
 from typing import Any
@@ -9,6 +11,7 @@ from typing import Any
 import joblib
 import numpy as np
 import pandas as pd
+from dotenv import load_dotenv
 
 
 ARTIFACT_LOAD_ERROR = (
@@ -46,14 +49,24 @@ class ModelNotReadyError(RuntimeError):
 class ModelService:
     def __init__(self, base_dir: Path | None = None) -> None:
         self.base_dir = base_dir or Path(__file__).resolve().parents[1]
+        load_dotenv(self.base_dir / ".env")
         self.models_dir = self.base_dir / "models"
-        self.data_path = self.base_dir / "data" / "flight_features_cleaned_for_modeling.csv"
 
         self.classifier_path = self.models_dir / "flight_delay_classifier.joblib"
         self.regressor_path = self.models_dir / "flight_delay_regressor.joblib"
         self.classifier_metadata_path = self.models_dir / "flight_delay_classifier_metadata.json"
         self.regressor_metadata_path = self.models_dir / "flight_delay_regressor_metadata.json"
         self.two_stage_metadata_path = self.models_dir / "two_stage_model_metadata.json"
+        self.model_artifact_source = os.getenv("MODEL_ARTIFACT_SOURCE", "mlflow").strip().lower()
+        self.mlflow_tracking_uri = self._resolve_mlflow_tracking_uri()
+        self.classifier_model_uri = os.getenv(
+            "MLFLOW_CLASSIFIER_MODEL_URI",
+            "models:/flight_delay_classifier/latest",
+        )
+        self.regressor_model_uri = os.getenv(
+            "MLFLOW_REGRESSOR_MODEL_URI",
+            "models:/flight_delay_regressor/latest",
+        )
 
         self.classifier: Any | None = None
         self.regressor: Any | None = None
@@ -77,11 +90,11 @@ class ModelService:
 
     @property
     def classifier_feature_columns(self) -> list[str]:
-        return self._expected_columns(self.classifier_metadata)
+        return self._expected_columns(self.classifier_metadata, self.classifier)
 
     @property
     def regressor_feature_columns(self) -> list[str]:
-        return self._expected_columns(self.regressor_metadata)
+        return self._expected_columns(self.regressor_metadata, self.regressor)
 
     @property
     def classifier_threshold(self) -> float:
@@ -107,10 +120,16 @@ class ModelService:
         return {
             "selected_classifier_model": self.classifier_metadata.get("selected_model"),
             "classifier_loaded": self.classifier_loaded,
+            "classifier_artifact_source": self.classifier_metadata.get("artifact_source"),
+            "classifier_model_uri": self.classifier_metadata.get("loaded_model_uri"),
             "classifier_threshold": self.classifier_threshold,
+            "classifier_threshold_objective": self.classifier_metadata.get("threshold_objective"),
+            "classifier_threshold_constraints": self.classifier_metadata.get("threshold_constraints"),
             "classifier_expected_feature_columns": self.classifier_feature_columns,
             "selected_regressor_model": self.regressor_metadata.get("selected_model"),
             "regressor_loaded": self.regressor_loaded,
+            "regressor_artifact_source": self.regressor_metadata.get("artifact_source"),
+            "regressor_model_uri": self.regressor_metadata.get("loaded_model_uri"),
             "regressor_expected_feature_columns": self.regressor_feature_columns,
             "target_definition": "delay > 15 minutes",
             "regression_interpretation": "conditional delay minutes if delayed",
@@ -192,8 +211,38 @@ class ModelService:
         self.two_stage_metadata = self._read_json(self.two_stage_metadata_path)
 
     def _load_artifacts(self) -> None:
+        if self.model_artifact_source in {"mlflow", "auto"}:
+            self.classifier, classifier_metadata, self.classifier_error = self._load_mlflow_model(
+                self.classifier_model_uri,
+                metadata_filename="flight_delay_classifier_metadata.json",
+                required=True,
+            )
+            if classifier_metadata:
+                self.classifier_metadata.update(classifier_metadata)
+
+            self.regressor, regressor_metadata, self.regressor_error = self._load_mlflow_model(
+                self.regressor_model_uri,
+                metadata_filename="flight_delay_regressor_metadata.json",
+                required=False,
+            )
+            if regressor_metadata:
+                self.regressor_metadata.update(regressor_metadata)
+
+            if self.classifier_loaded or self.model_artifact_source == "mlflow":
+                return
+
+            self.metadata_warnings.append(
+                f"MLflow classifier load failed, falling back to local artifacts: {self.classifier_error}"
+            )
+
         self.classifier, self.classifier_error = self._load_model(self.classifier_path, required=True)
         self.regressor, self.regressor_error = self._load_model(self.regressor_path, required=False)
+        if self.classifier_loaded:
+            self.classifier_metadata["artifact_source"] = "local"
+            self.classifier_metadata["loaded_model_uri"] = str(self.classifier_path)
+        if self.regressor_loaded:
+            self.regressor_metadata["artifact_source"] = "local"
+            self.regressor_metadata["loaded_model_uri"] = str(self.regressor_path)
 
     def _read_json(self, path: Path) -> dict[str, Any]:
         if not path.exists():
@@ -219,7 +268,93 @@ class ModelService:
         except Exception as exc:
             return None, f"{ARTIFACT_LOAD_ERROR} Original error: {exc}"
 
-    def _expected_columns(self, metadata: dict[str, Any]) -> list[str]:
+    def _load_mlflow_model(
+        self,
+        model_uri: str,
+        metadata_filename: str,
+        required: bool,
+    ) -> tuple[Any | None, dict[str, Any], str | None]:
+        if not self.mlflow_tracking_uri:
+            prefix = "Required" if required else "Optional"
+            return None, {}, f"{prefix} MLflow tracking URI is not configured."
+        try:
+            import mlflow
+            import mlflow.sklearn
+
+            mlflow.set_tracking_uri(self.mlflow_tracking_uri)
+            resolved_uri, run_id = self._resolve_mlflow_model_uri(model_uri)
+            model = mlflow.sklearn.load_model(resolved_uri)
+            metadata = self._read_mlflow_metadata(run_id, metadata_filename)
+            metadata["artifact_source"] = "mlflow"
+            metadata["requested_model_uri"] = model_uri
+            metadata["loaded_model_uri"] = resolved_uri
+            return model, metadata, None
+        except Exception as exc:
+            prefix = "Required" if required else "Optional"
+            return None, {}, f"{prefix} MLflow model could not be loaded from {model_uri}: {exc}"
+
+    def _resolve_mlflow_tracking_uri(self) -> str | None:
+        explicit = os.getenv("MLFLOW_TRACKING_URI")
+        if explicit:
+            return explicit
+        local_mlruns = self.base_dir / "mlruns"
+        if local_mlruns.exists():
+            return local_mlruns.resolve().as_uri()
+        return None
+
+    def _resolve_mlflow_model_uri(self, model_uri: str) -> tuple[str, str | None]:
+        if model_uri.startswith("runs:/"):
+            match = re.match(r"^runs:/([^/]+)/(.+)$", model_uri)
+            return model_uri, match.group(1) if match else None
+        if not model_uri.startswith("models:/"):
+            return model_uri, None
+
+        from mlflow.tracking import MlflowClient
+
+        client = MlflowClient()
+        name, selector = self._parse_models_uri(model_uri)
+        if selector.lower() == "latest":
+            versions = list(client.search_model_versions(f"name = '{name}'"))
+            if not versions:
+                raise ValueError(f"No MLflow model versions found for registered model {name!r}.")
+            version = max(versions, key=lambda item: int(item.version))
+            return f"models:/{name}/{version.version}", version.run_id
+        if selector.isdigit():
+            version = client.get_model_version(name, selector)
+            return f"models:/{name}/{selector}", version.run_id
+
+        try:
+            version = client.get_model_version_by_alias(name, selector)
+        except Exception:
+            latest = client.get_latest_versions(name, stages=[selector])
+            if not latest:
+                raise
+            version = latest[0]
+        return f"models:/{name}/{version.version}", version.run_id
+
+    def _parse_models_uri(self, model_uri: str) -> tuple[str, str]:
+        payload = model_uri.removeprefix("models:/").strip("/")
+        if "/" not in payload:
+            raise ValueError(f"MLflow models URI must include version, alias, stage, or latest: {model_uri}")
+        name, selector = payload.rsplit("/", 1)
+        return name, selector
+
+    def _read_mlflow_metadata(self, run_id: str | None, metadata_filename: str) -> dict[str, Any]:
+        if not run_id:
+            return {}
+        try:
+            from mlflow.tracking import MlflowClient
+
+            client = MlflowClient()
+            local_path = client.download_artifacts(run_id, metadata_filename)
+            return json.loads(Path(local_path).read_text(encoding="utf-8"))
+        except Exception as exc:
+            self.metadata_warnings.append(
+                f"MLflow metadata artifact could not be loaded: {metadata_filename}: {exc}"
+            )
+            return {}
+
+    def _expected_columns(self, metadata: dict[str, Any], model: Any | None) -> list[str]:
         for key in (
             "feature_columns",
             "expected_feature_columns",
@@ -235,30 +370,23 @@ class ModelService:
         if isinstance(numeric_features, list) or isinstance(categorical_features, list):
             return [str(column) for column in (numeric_features or []) + (categorical_features or [])]
 
-        return self._derive_feature_columns_from_dataset()
+        return self._derive_feature_columns_from_model(model)
 
-    def _derive_feature_columns_from_dataset(self) -> list[str]:
-        if not self.data_path.exists():
-            self.metadata_warnings.append("cannot derive feature columns because cleaned dataset is missing")
+    def _derive_feature_columns_from_model(self, model: Any | None) -> list[str]:
+        if model is None or not hasattr(model, "named_steps"):
             return []
-
-        columns = list(pd.read_csv(self.data_path, nrows=5).columns)
-        selected = [column for column in columns if column not in FORBIDDEN_FEATURE_COLUMNS]
-
-        grouped_columns = set(columns)
-        selected = [
-            column
-            for column in selected
-            if not (column in GROUPED_CATEGORICAL_PAIRS and GROUPED_CATEGORICAL_PAIRS[column] in grouped_columns)
-        ]
-
-        selected_set = set(selected)
-        selected = [
-            column
-            for column in selected
-            if not (column.endswith("_int") and column[:-4] in selected_set)
-        ]
-        return selected
+        preprocessor = model.named_steps.get("preprocess")
+        if preprocessor is None or not hasattr(preprocessor, "transformers"):
+            return []
+        columns: list[str] = []
+        for _, _, transformer_columns in preprocessor.transformers:
+            if transformer_columns == "drop" or transformer_columns is None:
+                continue
+            if isinstance(transformer_columns, str):
+                columns.append(transformer_columns)
+            else:
+                columns.extend(str(column) for column in transformer_columns)
+        return columns
 
     def _predict_probability(self, x_classifier: pd.DataFrame) -> float:
         if hasattr(self.classifier, "predict_proba"):

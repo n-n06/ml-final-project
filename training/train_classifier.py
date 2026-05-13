@@ -16,6 +16,7 @@ from sklearn.pipeline import Pipeline
 from training.common import (
     DEFAULT_MLFLOW_EXPERIMENT,
     DEFAULT_DELAY_THRESHOLD_MINUTES,
+    DEFAULT_CLASSIFIER_REGISTERED_MODEL,
     DEFAULT_POSTGRES_TABLE,
     FeaturePreparation,
     build_preprocessor,
@@ -37,6 +38,10 @@ from training.common import (
     training_run_metadata,
     write_json,
 )
+
+
+DEFAULT_PRECISION_MIN_RECALL = 0.25
+DEFAULT_PRECISION_MIN_PREDICTED_POSITIVE_RATE = 0.03
 
 
 @dataclass(frozen=True)
@@ -75,7 +80,13 @@ def build_classifier_pipeline(
     return Pipeline(steps=[("preprocess", preprocessor), ("model", classifier)])
 
 
-def tune_threshold(model_template: Pipeline, X_train: pd.DataFrame, y_train: pd.Series) -> tuple[float, pd.DataFrame]:
+def tune_threshold(
+    model_template: Pipeline,
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    min_recall: float = DEFAULT_PRECISION_MIN_RECALL,
+    min_predicted_positive_rate: float = DEFAULT_PRECISION_MIN_PREDICTED_POSITIVE_RATE,
+) -> tuple[float, pd.DataFrame, dict[str, Any]]:
     valid_split_idx = int(len(X_train) * 0.8)
     if valid_split_idx <= 0 or valid_split_idx >= len(X_train):
         raise ValueError("Threshold validation split produced an empty subtrain or validation set.")
@@ -84,22 +95,50 @@ def tune_threshold(model_template: Pipeline, X_train: pd.DataFrame, y_train: pd.
     threshold_model.fit(X_train.iloc[:valid_split_idx], y_train.iloc[:valid_split_idx])
     valid_proba = threshold_model.predict_proba(X_train.iloc[valid_split_idx:])[:, 1]
     y_valid = y_train.iloc[valid_split_idx:]
+    y_valid_values = y_valid.to_numpy()
 
     rows = []
     for threshold in np.linspace(0.05, 0.95, 181):
         pred = (valid_proba >= threshold).astype(int)
+        predicted_positive_count = int(pred.sum())
+        true_positive_count = int(((pred == 1) & (y_valid_values == 1)).sum())
+        false_positive_count = int(((pred == 1) & (y_valid_values == 0)).sum())
+        false_negative_count = int(((pred == 0) & (y_valid_values == 1)).sum())
         rows.append(
             {
                 "threshold": float(threshold),
                 "precision": float(precision_score(y_valid, pred, zero_division=0)),
                 "recall": float(recall_score(y_valid, pred, zero_division=0)),
                 "f1": float(f1_score(y_valid, pred, zero_division=0)),
+                "predicted_positive_count": predicted_positive_count,
+                "predicted_positive_rate": float(predicted_positive_count / len(pred)),
+                "true_positive_count": true_positive_count,
+                "false_positive_count": false_positive_count,
+                "false_negative_count": false_negative_count,
             }
         )
 
     threshold_df = pd.DataFrame(rows)
-    best_row = threshold_df.sort_values(["f1", "recall", "precision"], ascending=False).iloc[0]
-    return float(best_row["threshold"]), threshold_df
+    eligible = threshold_df[
+        (threshold_df["recall"] >= min_recall)
+        & (threshold_df["predicted_positive_rate"] >= min_predicted_positive_rate)
+    ]
+    if eligible.empty:
+        raise ValueError(
+            "No threshold satisfies the precision constraints: "
+            f"recall >= {min_recall:.3f} and predicted_positive_rate >= "
+            f"{min_predicted_positive_rate:.3f}. Relax the constraints or improve the model."
+        )
+
+    best_row = eligible.sort_values(
+        ["precision", "recall", "f1", "predicted_positive_rate"],
+        ascending=False,
+    ).iloc[0]
+    selection = {
+        key: int(value) if key.endswith("_count") else float(value)
+        for key, value in best_row.to_dict().items()
+    }
+    return float(best_row["threshold"]), threshold_df, selection
 
 
 def train_classifier(
@@ -124,6 +163,9 @@ def train_classifier(
     min_samples_split: int = 2,
     max_features: str | None = None,
     class_weight: str | None = "balanced",
+    precision_min_recall: float = DEFAULT_PRECISION_MIN_RECALL,
+    precision_min_predicted_positive_rate: float = DEFAULT_PRECISION_MIN_PREDICTED_POSITIVE_RATE,
+    registered_model_name: str | None = DEFAULT_CLASSIFIER_REGISTERED_MODEL,
 ) -> ClassifierTrainingResult:
     paths = resolve_paths(project_dir, data_path, models_dir, metrics_dir)
     paths.models_dir.mkdir(parents=True, exist_ok=True)
@@ -154,7 +196,13 @@ def train_classifier(
         class_weight=class_weight,
     )
 
-    tuned_threshold, threshold_df = tune_threshold(model_template, split.X_train, split.y_class_train)
+    tuned_threshold, threshold_df, threshold_selection = tune_threshold(
+        model_template,
+        split.X_train,
+        split.y_class_train,
+        min_recall=precision_min_recall,
+        min_predicted_positive_rate=precision_min_predicted_positive_rate,
+    )
 
     final_model = clone(model_template)
     final_model.fit(split.X_train, split.y_class_train)
@@ -171,7 +219,7 @@ def train_classifier(
         final_model,
         split.X_test,
         split.y_class_test,
-        f"{selected_model_name} / threshold {tuned_threshold:.2f}",
+        f"{selected_model_name} / precision-tuned threshold {tuned_threshold:.2f}",
         threshold=tuned_threshold,
     )
     metrics_df = pd.DataFrame([metrics_05, metrics_tuned])
@@ -195,6 +243,13 @@ def train_classifier(
         ),
         "default_threshold": 0.5,
         "tuned_threshold": tuned_threshold,
+        "threshold_objective": "maximize precision subject to validation recall and coverage constraints",
+        "threshold_constraints": {
+            "min_recall": precision_min_recall,
+            "min_predicted_positive_rate": precision_min_predicted_positive_rate,
+        },
+        "threshold_selection_validation": threshold_selection,
+        "mlflow_registered_model_name": registered_model_name,
         "train_rows": int(len(split.X_train)),
         "test_rows": int(len(split.X_test)),
         "train_delay_rate": float(split.y_class_train.mean()),
@@ -235,6 +290,8 @@ def train_classifier(
                     "test_size": test_size,
                     "random_state": random_state,
                     "model_params": metadata["model_params"],
+                    "threshold_objective": metadata["threshold_objective"],
+                    "threshold_constraints": metadata["threshold_constraints"],
                     "data_source": {
                         "source": dataset.source_metadata.get("source"),
                         "rows": dataset.source_metadata.get("rows"),
@@ -256,8 +313,15 @@ def train_classifier(
                 },
                 prefix="dataset",
             )
+            model_info = log_mlflow_sklearn_model(
+                mlflow,
+                final_model,
+                artifact_path="classifier_model",
+                registered_model_name=registered_model_name,
+            )
+            metadata["mlflow_model_uri"] = getattr(model_info, "model_uri", None)
+            write_json(metadata_path, metadata)
             log_mlflow_artifacts(mlflow, [model_path, metadata_path, metrics_path, threshold_metrics_path])
-            log_mlflow_sklearn_model(mlflow, final_model, artifact_path="classifier_model")
 
     return ClassifierTrainingResult(
         model=final_model,
@@ -292,6 +356,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-samples-split", type=int, default=2)
     parser.add_argument("--max-features", default=None)
     parser.add_argument("--class-weight", default="balanced")
+    parser.add_argument("--registered-model-name", default=DEFAULT_CLASSIFIER_REGISTERED_MODEL)
+    parser.add_argument("--precision-min-recall", type=float, default=DEFAULT_PRECISION_MIN_RECALL)
+    parser.add_argument(
+        "--precision-min-predicted-positive-rate",
+        type=float,
+        default=DEFAULT_PRECISION_MIN_PREDICTED_POSITIVE_RATE,
+    )
     return parser.parse_args()
 
 
@@ -318,6 +389,9 @@ def main() -> None:
         min_samples_split=args.min_samples_split,
         max_features=args.max_features,
         class_weight=args.class_weight,
+        precision_min_recall=args.precision_min_recall,
+        precision_min_predicted_positive_rate=args.precision_min_predicted_positive_rate,
+        registered_model_name=args.registered_model_name,
     )
     print("Saved classifier:", result.model_path)
     print("Saved metadata:", result.metadata_path)

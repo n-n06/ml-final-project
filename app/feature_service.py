@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
+from sqlalchemy.pool import NullPool
 
 from app.model_service import FORBIDDEN_FEATURE_COLUMNS, GROUPED_CATEGORICAL_PAIRS
 
@@ -21,7 +25,9 @@ class RowNotFoundError(LookupError):
 class FeatureService:
     def __init__(self, base_dir: Path | None = None) -> None:
         self.base_dir = base_dir or Path(__file__).resolve().parents[1]
-        self.data_path = self.base_dir / "data" / "flight_features_cleaned_for_modeling.csv"
+        load_dotenv(self.base_dir / ".env")
+        self.database_url = os.getenv("DATABASE_URL")
+        self.feature_table = os.getenv("API_FEATURE_TABLE", os.getenv("FEATURE_TABLE", "gold.flight_features_cleaned"))
         self.dataset: pd.DataFrame | None = None
         self.dataset_error: str | None = None
         self._load_dataset()
@@ -94,13 +100,17 @@ class FeatureService:
         return prepared
 
     def _load_dataset(self) -> None:
-        if not self.data_path.exists():
-            self.dataset_error = f"Cleaned dataset is missing: {self.data_path}"
+        if not self.database_url:
+            self.dataset_error = "DATABASE_URL is required to load cleaned features for API search/predict-by-row."
             return
         try:
-            self.dataset = pd.read_csv(self.data_path).reset_index(drop=True)
+            table_name = self._validate_table_name(self.feature_table)
+            engine = create_engine(self.database_url, poolclass=NullPool, echo=False)
+            query = text(f"SELECT * FROM {table_name} ORDER BY dep_scheduled_utc")
+            with engine.connect() as conn:
+                self.dataset = pd.read_sql_query(query, conn).reset_index(drop=True)
         except Exception as exc:
-            self.dataset_error = f"Cleaned dataset could not be loaded: {exc}"
+            self.dataset_error = f"Cleaned feature table could not be loaded from Postgres: {exc}"
 
     def _require_dataset(self) -> pd.DataFrame:
         if self.dataset is None:
@@ -150,3 +160,8 @@ class FeatureService:
         if isinstance(value, np.generic):
             return value.item()
         return value
+
+    def _validate_table_name(self, table_name: str) -> str:
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$", table_name):
+            raise ValueError(f"Unsafe feature table name: {table_name!r}")
+        return table_name

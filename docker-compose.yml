@@ -15,6 +15,8 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__FERNET_KEY: "${AIRFLOW_FERNET_KEY}"
     AIRFLOW__WEBSERVER__SECRET_KEY: "${AIRFLOW_SECRET_KEY}"
     AIRFLOW_CONN_PIPELINE_POSTGRES: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    MLFLOW_TRACKING_URI: file:///opt/airflow/mlruns
     BATCH_SIZE: "500"
     SSL_CA_LOCATION: /etc/ssl/certs/ca-certificates.crt
   volumes:
@@ -22,6 +24,9 @@ x-airflow-common: &airflow-common
     - ./sql:/opt/airflow/sql
     - ./pipeline:/opt/airflow/pipeline
     - ./ingestion:/opt/airflow/ingestion
+    - ./training:/opt/airflow/training
+    - ./models:/opt/airflow/models
+    - ./mlruns:/opt/airflow/mlruns
     - ./airflow/logs:/opt/airflow/logs
     - ./airflow/plugins:/opt/airflow/plugins
     - ./data:/opt/airflow/data
