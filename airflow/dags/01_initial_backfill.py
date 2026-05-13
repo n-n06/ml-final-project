@@ -11,6 +11,7 @@ from lib.pipeline_tasks import (
     task_transform_airports_to_silver,
     task_transform_flights_to_silver,
     task_transform_notams_to_silver,
+    task_clean_gold_for_modeling,
 )
 
 _DEFAULT_ARGS = {
@@ -100,6 +101,10 @@ def initial_backfill():
 
         return {"total_flights_processed": total}
 
+    @task
+    def clean_gold_for_modeling(_: dict) -> dict:
+        return task_clean_gold_for_modeling()
+
     tables = create_tables()
 
     ingest_airports_t = ingest_airports()
@@ -112,7 +117,7 @@ def initial_backfill():
     s_flt = silver_flights(bronze_flights(ingest_flights_t))
     s_not = silver_notams(bronze_notams(ingest_notams_t))
 
-    build_gold_all(s_apt, s_flt, s_not)
+    clean_gold_for_modeling(build_gold_all(s_apt, s_flt, s_not))
 
 
 initial_backfill()
