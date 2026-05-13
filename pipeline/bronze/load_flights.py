@@ -1,4 +1,3 @@
-
 import json
 import logging
 from typing import Any
@@ -6,8 +5,8 @@ from typing import Any
 from sqlalchemy import text
 
 from ingestion.config import KafkaConfig
-from pipeline.db import engine
-from pipeline.kafka_consumer import JsonKafkaConsumer
+from pipeline.bronze.kafka_to_bronze import drain_topic_to_bronze
+from pipeline.bronze.utils import _parse_date, _parse_ts
 
 logger = logging.getLogger(__name__)
 
@@ -27,11 +26,11 @@ _INSERT_SQL = text("""
 
 def _parse_envelope(msg: dict) -> dict[str, Any]:
     return {
-        "ingestion_ts_utc":  msg.get("ingestion_ts_utc"),
+        "ingestion_ts_utc":  _parse_ts(msg.get("ingestion_ts_utc")),
         "queried_airport":   msg.get("queried_airport"),
         "query_direction":   msg.get("query_direction"),
-        "chunk_from":        msg.get("chunk_from"),
-        "chunk_to":          msg.get("chunk_to"),
+        "chunk_from":        _parse_date(msg.get("chunk_from")),
+        "chunk_to":          _parse_date(msg.get("chunk_to")),
         "source":            msg.get("source"),
         "payload":           json.dumps(msg.get("payload", {})),
     }
@@ -51,28 +50,17 @@ def load_flights_to_bronze(
     Return: 
         stats dict {consumed, failed, inserted}
     """
-    total_inserted = 0
-
-    with JsonKafkaConsumer(
-        config=kafka_config,
+    stats = drain_topic_to_bronze(
+        kafka_config=kafka_config,
         topic=TOPIC,
         group_id=GROUP_ID,
-    ) as consumer:
-        for batch in consumer.consume_batch(batch_size=batch_size):
-            rows = [_parse_envelope(msg) for msg in batch]
-            try:
-                with engine.begin() as conn:   # auto-rollback on exception
-                    conn.execute(_INSERT_SQL, rows)
-                consumer.commit()
-                total_inserted += len(rows)
-                logger.info(
-                    "Inserted %d rows into bronze.flights_raw (total=%d)",
-                    len(rows), total_inserted,
-                )
-            except Exception as exc:
-                logger.error("Batch insert failed: %s", exc)
-                raise
-
-    stats = {**consumer.stats, "inserted": total_inserted}
-    logger.info("Bronze flights load complete: %s", stats)
+        insert_sql=_INSERT_SQL,
+        parse_envelope=_parse_envelope,
+        bronze_table="bronze.flights_raw",
+        batch_size=batch_size,
+    )
+    logger.info(
+        "Bronze flights load complete: consumed=%d failed=%d inserted=%d",
+        stats["consumed"], stats["failed"], stats["inserted"],
+    )
     return stats

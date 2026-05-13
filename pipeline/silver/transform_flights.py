@@ -6,6 +6,7 @@ from sqlalchemy import text
 
 from pipeline.cursors import get_cursor, update_cursor
 from pipeline.db import engine
+from pipeline.silver.utils import _to_ts, _df_to_records, _upper, _to_int
 
 logger = logging.getLogger(__name__)
 
@@ -57,27 +58,10 @@ _UPSERT_SQL = text("""
 """)
 
 
-def _to_ts(val: Any) -> pd.Timestamp | None:
-    """Parse aviation API timestamp strings (e.g. '2026-04-10t07:45:00.000')."""
-    if not val:
-        return None
-    try:
-        return pd.Timestamp(val).tz_localize("UTC")
-    except Exception:
-        return None
-
-
-def _upper(val: Any) -> str | None:
-    """
-    Uppercase string, return None for empty/null
-    """
-    return val.upper() if val else None
-
-
 def _transform_batch(rows: list[dict]) -> pd.DataFrame:
     records = []
     for row in rows:
-        p   = row["payload"]          # psycopg2 auto-deserializes JSONB → dict
+        p   = row["payload"]          
         dep = p.get("departure", {})
         arr = p.get("arrival",   {})
         aln = p.get("airline",   {})
@@ -99,14 +83,14 @@ def _transform_batch(rows: list[dict]) -> pd.DataFrame:
             "dep_actual_utc":           _to_ts(dep.get("actualTime")),
             "dep_estimated_runway_utc": _to_ts(dep.get("estimatedRunway")),
             "dep_actual_runway_utc":    _to_ts(dep.get("actualRunway")),
-            "dep_delay_min":            dep.get("delay"),   # None when not reported
+            "dep_delay_min":            _to_int(dep.get("delay")),
             "arr_iata":                 _upper(arr.get("iataCode")),
             "arr_icao":                 _upper(arr.get("icaoCode")),
             "arr_baggage":              arr.get("baggage"),
             "arr_scheduled_utc":        _to_ts(arr.get("scheduledTime")),
             "arr_estimated_utc":        _to_ts(arr.get("estimatedTime")),
             "arr_actual_utc":           _to_ts(arr.get("actualTime")),
-            "arr_delay_min":            arr.get("delay"),
+            "arr_delay_min":            _to_int(arr.get("delay")),
             "queried_airport":          row.get("queried_airport"),
             "chunk_from":               row.get("chunk_from"),
             "chunk_to":                 row.get("chunk_to"),
@@ -118,16 +102,6 @@ def _transform_batch(rows: list[dict]) -> pd.DataFrame:
     df = df.dropna(subset=["flight_iata", "dep_scheduled_utc"])
     df = df.drop_duplicates(subset=["flight_iata", "dep_scheduled_utc"], keep="last")
     return df
-
-
-def _df_to_records(df: pd.DataFrame) -> list[dict]:
-    """
-    DataFrame => list of dicts with NaT/NaN replaced by None
-    """
-    return [
-        {k: (None if pd.isna(v) else v) for k, v in row.items()}
-        for row in df.to_dict(orient="records")
-    ]
 
 
 def transform_flights_to_silver(chunk_size: int = CHUNK_SIZE) -> dict[str, int]:
@@ -157,15 +131,17 @@ def transform_flights_to_silver(chunk_size: int = CHUNK_SIZE) -> dict[str, int]:
 
             df = _transform_batch(list(rows))
 
-            if not df.empty:
-                records = _df_to_records(df)
-                conn.execute(_UPSERT_SQL, records)
-                total_upserted += len(records)
+            with conn.begin():
+                if not df.empty:
+                    records = _df_to_records(df)
+                    conn.execute(_UPSERT_SQL, records)
+                    total_upserted += len(records)
 
-            last_id = rows[-1]["id"]
+                last_id = rows[-1]["id"]
+                update_cursor(conn, CURSOR_KEY, last_id)
+
             total_read += len(rows)
             chunks += 1
-
             logger.info(
                 "Chunk %d: read=%d transformed=%d (cursor → %d)",
                 chunks, len(rows), len(df), last_id,

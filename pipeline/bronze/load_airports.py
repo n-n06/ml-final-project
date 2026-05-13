@@ -65,6 +65,8 @@ def load_airports_to_bronze(csv_path: Path) -> dict[str, int]:
         con=engine,
         if_exists="append",
         index=False,
+        chunksize=5000,
+        method="multi"
     )
 
     logger.info(
