@@ -35,9 +35,9 @@ _FEATURE_COLS = [
     # route features
     "route_distance_km", "is_domestic", "is_international",
     # # rolling delay stats
-    # "route_avg_delay_7d", "route_avg_delay_30d", "route_delay_rate_7d",
-    # "airline_avg_delay_7d", "airline_avg_delay_30d", "airline_delay_rate_7d",
-    # "dep_airport_avg_delay_7d", "dep_airport_avg_delay_30d", "dep_airport_delay_rate_7d",
+    "route_avg_delay_7d", "route_avg_delay_30d", "route_delay_rate_7d",
+    "airline_avg_delay_7d", "airline_avg_delay_30d", "airline_delay_rate_7d",
+    "dep_airport_avg_delay_7d", "dep_airport_avg_delay_30d", "dep_airport_delay_rate_7d",
     # NOTAM
     "notam_count_dep", "notam_count_arr", "notam_count_route",
     "notam_active_dep", "notam_active_arr",
@@ -139,50 +139,50 @@ def _fetch_notams_for_window(conn, start_ts: datetime, end_ts: datetime) -> pd.D
     )
 
 
-# def _fetch_delay_stats(
-#     conn,
-#     window_start: datetime,
-#     window_end: datetime,
-# ) -> dict[str, pd.DataFrame]:
-#     """
-#     Aggregate delay stats over a historical window.
-#     window_end = target_start ensures no data leakage into features.
-#     """
-#     p = {"start": window_start, "end": window_end}
-#
-#     route = pd.read_sql(text("""
-#         SELECT dep_iata, arr_iata,
-#                AVG(dep_delay_min)                                        AS avg_delay,
-#                AVG(CASE WHEN dep_delay_min > 15 THEN 1.0 ELSE 0.0 END) AS delay_rate
-#         FROM silver.flights
-#         WHERE dep_scheduled_utc >= :start AND dep_scheduled_utc < :end
-#           AND dep_delay_min IS NOT NULL
-#         GROUP BY dep_iata, arr_iata
-#     """), conn, params=p)
-#
-#     airline = pd.read_sql(text("""
-#         SELECT airline_iata,
-#                AVG(dep_delay_min)                                        AS avg_delay,
-#                AVG(CASE WHEN dep_delay_min > 15 THEN 1.0 ELSE 0.0 END) AS delay_rate
-#         FROM silver.flights
-#         WHERE dep_scheduled_utc >= :start AND dep_scheduled_utc < :end
-#           AND dep_delay_min IS NOT NULL
-#           AND airline_iata IS NOT NULL
-#         GROUP BY airline_iata
-#     """), conn, params=p)
-#
-#     airport = pd.read_sql(text("""
-#         SELECT dep_iata,
-#                AVG(dep_delay_min)                                        AS avg_delay,
-#                AVG(CASE WHEN dep_delay_min > 15 THEN 1.0 ELSE 0.0 END) AS delay_rate
-#         FROM silver.flights
-#         WHERE dep_scheduled_utc >= :start AND dep_scheduled_utc < :end
-#           AND dep_delay_min IS NOT NULL
-#           AND dep_iata IS NOT NULL
-#         GROUP BY dep_iata
-#     """), conn, params=p)
-#
-#     return {"route": route, "airline": airline, "airport": airport}
+def _fetch_delay_stats(
+    conn,
+    window_start: datetime,
+    window_end: datetime,
+) -> dict[str, pd.DataFrame]:
+    """
+    Aggregate delay stats over a historical window.
+    window_end = target_start ensures no data leakage into features.
+    """
+    p = {"start": window_start, "end": window_end}
+
+    route = pd.read_sql(text("""
+        SELECT dep_iata, arr_iata,
+               AVG(dep_delay_min)                                        AS avg_delay,
+               AVG(CASE WHEN dep_delay_min > 15 THEN 1.0 ELSE 0.0 END) AS delay_rate
+        FROM silver.flights
+        WHERE dep_scheduled_utc >= :start AND dep_scheduled_utc < :end
+          AND dep_delay_min IS NOT NULL
+        GROUP BY dep_iata, arr_iata
+    """), conn, params=p)
+
+    airline = pd.read_sql(text("""
+        SELECT airline_iata,
+               AVG(dep_delay_min)                                        AS avg_delay,
+               AVG(CASE WHEN dep_delay_min > 15 THEN 1.0 ELSE 0.0 END) AS delay_rate
+        FROM silver.flights
+        WHERE dep_scheduled_utc >= :start AND dep_scheduled_utc < :end
+          AND dep_delay_min IS NOT NULL
+          AND airline_iata IS NOT NULL
+        GROUP BY airline_iata
+    """), conn, params=p)
+
+    airport = pd.read_sql(text("""
+        SELECT dep_iata,
+               AVG(dep_delay_min)                                        AS avg_delay,
+               AVG(CASE WHEN dep_delay_min > 15 THEN 1.0 ELSE 0.0 END) AS delay_rate
+        FROM silver.flights
+        WHERE dep_scheduled_utc >= :start AND dep_scheduled_utc < :end
+          AND dep_delay_min IS NOT NULL
+          AND dep_iata IS NOT NULL
+        GROUP BY dep_iata
+    """), conn, params=p)
+
+    return {"route": route, "airline": airline, "airport": airport}
 
 
 def _fetch_congestion(
@@ -278,45 +278,45 @@ def _add_route_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# def _add_rolling_stats(
-#     df: pd.DataFrame,
-#     stats_7d: dict[str, pd.DataFrame],
-#     stats_30d: dict[str, pd.DataFrame],
-# ) -> pd.DataFrame:
-#     # route calc
-#     r7 = stats_7d["route"].rename(columns={
-#         "avg_delay": "route_avg_delay_7d", "delay_rate": "route_delay_rate_7d"
-#     })
-#     r30 = stats_30d["route"].rename(columns={
-#         "avg_delay": "route_avg_delay_30d"
-#     })[["dep_iata", "arr_iata", "route_avg_delay_30d"]]
-#
-#     df = df.merge(r7,  on=["dep_iata", "arr_iata"], how="left")
-#     df = df.merge(r30, on=["dep_iata", "arr_iata"], how="left")
-#
-#     # airline info
-#     a7 = stats_7d["airline"].rename(columns={
-#         "avg_delay": "airline_avg_delay_7d", "delay_rate": "airline_delay_rate_7d"
-#     })
-#     a30 = stats_30d["airline"].rename(columns={
-#         "avg_delay": "airline_avg_delay_30d"
-#     })[["airline_iata", "airline_avg_delay_30d"]]
-#
-#     df = df.merge(a7,  on="airline_iata", how="left")
-#     df = df.merge(a30, on="airline_iata", how="left")
-#
-#     # airport info
-#     ap7 = stats_7d["airport"].rename(columns={
-#         "avg_delay": "dep_airport_avg_delay_7d", "delay_rate": "dep_airport_delay_rate_7d"
-#     })
-#     ap30 = stats_30d["airport"].rename(columns={
-#         "avg_delay": "dep_airport_avg_delay_30d"
-#     })[["dep_iata", "dep_airport_avg_delay_30d"]]
-#
-#     df = df.merge(ap7,  on="dep_iata", how="left")
-#     df = df.merge(ap30, on="dep_iata", how="left")
-#
-#     return df
+def _add_rolling_stats(
+    df: pd.DataFrame,
+    stats_7d: dict[str, pd.DataFrame],
+    stats_30d: dict[str, pd.DataFrame],
+) -> pd.DataFrame:
+    # route calc
+    r7 = stats_7d["route"].rename(columns={
+        "avg_delay": "route_avg_delay_7d", "delay_rate": "route_delay_rate_7d"
+    })
+    r30 = stats_30d["route"].rename(columns={
+        "avg_delay": "route_avg_delay_30d"
+    })[["dep_iata", "arr_iata", "route_avg_delay_30d"]]
+
+    df = df.merge(r7,  on=["dep_iata", "arr_iata"], how="left")
+    df = df.merge(r30, on=["dep_iata", "arr_iata"], how="left")
+
+    # airline info
+    a7 = stats_7d["airline"].rename(columns={
+        "avg_delay": "airline_avg_delay_7d", "delay_rate": "airline_delay_rate_7d"
+    })
+    a30 = stats_30d["airline"].rename(columns={
+        "avg_delay": "airline_avg_delay_30d"
+    })[["airline_iata", "airline_avg_delay_30d"]]
+
+    df = df.merge(a7,  on="airline_iata", how="left")
+    df = df.merge(a30, on="airline_iata", how="left")
+
+    # airport info
+    ap7 = stats_7d["airport"].rename(columns={
+        "avg_delay": "dep_airport_avg_delay_7d", "delay_rate": "dep_airport_delay_rate_7d"
+    })
+    ap30 = stats_30d["airport"].rename(columns={
+        "avg_delay": "dep_airport_avg_delay_30d"
+    })[["dep_iata", "dep_airport_avg_delay_30d"]]
+
+    df = df.merge(ap7,  on="dep_iata", how="left")
+    df = df.merge(ap30, on="dep_iata", how="left")
+
+    return df
 
 
 def _add_congestion(
@@ -516,6 +516,17 @@ def build_flight_features(
         notams_df    = _fetch_notams_for_window(conn, target_start, target_end)
         congestion   = _fetch_congestion(conn, target_start, target_end)
 
+        stats_7d  = _fetch_delay_stats(
+            conn,
+            window_start=target_start - timedelta(days=7),
+            window_end=target_start,
+        )
+        stats_30d = _fetch_delay_stats(
+            conn,
+            window_start=target_start - timedelta(days=30),
+            window_end=target_start,
+        )
+
 
     # build features
     df = target_df.copy()
@@ -524,6 +535,7 @@ def build_flight_features(
     df = _add_route_features(df)
     df = _add_congestion(df, congestion)
     df = _add_notam_features(df, notams_df, PREDICTION_HORIZON_HOURS)
+    df = _add_rolling_stats(df, stats_7d, stats_30d)
     df = _add_target_variable(df)
 
     # write

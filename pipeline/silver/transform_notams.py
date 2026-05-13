@@ -5,6 +5,7 @@ import pandas as pd
 from sqlalchemy import text
 
 from pipeline.cursors import get_cursor, update_cursor
+from pipeline.silver.utils import _to_ts, _df_to_records
 from pipeline.db import engine
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,9 @@ _UPSERT_SQL = text("""
         :queried_airport, :source, :ingestion_ts_utc
     )
     ON CONFLICT (notam_number) DO UPDATE SET
+        location_icao    = EXCLUDED.location_icao,
+        class            = EXCLUDED.class,
+        start_utc        = EXCLUDED.start_utc,
         end_utc          = EXCLUDED.end_utc,
         condition_text   = EXCLUDED.condition_text,
         ingestion_ts_utc = EXCLUDED.ingestion_ts_utc,
@@ -39,21 +43,13 @@ _UPSERT_SQL = text("""
 """)
 
 
-def _to_ts(val: Any) -> pd.Timestamp | None:
-    if not val:
-        return None
-    try:
-        return pd.Timestamp(val).tz_localize("UTC")
-    except Exception:
-        return None
-
 
 def _transform_batch(rows: list[dict]) -> pd.DataFrame:
     records = []
     for row in rows:
         p = row["payload"]
 
-        notam_number = (p.get("number") or "").strip().lower() or None
+        notam_number = (p.get("number") or "").strip().upper() or None
         if not notam_number:
             continue   # skip malformed records with no identifier
 
@@ -75,13 +71,6 @@ def _transform_batch(rows: list[dict]) -> pd.DataFrame:
 
     df = df.drop_duplicates(subset=["notam_number"], keep="last")
     return df
-
-
-def _df_to_records(df: pd.DataFrame) -> list[dict]:
-    return [
-        {k: (None if pd.isna(v) else v) for k, v in row.items()}
-        for row in df.to_dict(orient="records")
-    ]
 
 
 def transform_notams_to_silver(chunk_size: int = CHUNK_SIZE) -> dict[str, int]:
@@ -110,15 +99,17 @@ def transform_notams_to_silver(chunk_size: int = CHUNK_SIZE) -> dict[str, int]:
 
             df = _transform_batch(list(rows))
 
-            if not df.empty:
-                records = _df_to_records(df)
-                conn.execute(_UPSERT_SQL, records)
-                total_upserted += len(records)
+            with conn.begin():
+                if not df.empty:
+                    records = _df_to_records(df)
+                    conn.execute(_UPSERT_SQL, records)
+                    total_upserted += len(records)
 
-            last_id = rows[-1]["id"]
+                last_id = rows[-1]["id"]
+                update_cursor(conn, CURSOR_KEY, last_id)
+
             total_read += len(rows)
             chunks += 1
-
             logger.info(
                 "Chunk %d: read=%d transformed=%d (cursor → %d)",
                 chunks, len(rows), len(df), last_id,

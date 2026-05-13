@@ -5,6 +5,7 @@ from sqlalchemy import text
 
 from pipeline.cursors import get_cursor, update_cursor
 from pipeline.db import engine
+from pipeline.silver.utils import _df_to_records
 
 logger = logging.getLogger(__name__)
 
@@ -85,13 +86,6 @@ def _transform_batch(rows: list[dict]):
     ]]
 
 
-def _df_to_records(df: pd.DataFrame) -> list[dict]:
-    return [
-        {k: (None if pd.isna(v) else v) for k, v in row.items()}
-        for row in df.to_dict(orient="records")
-    ]
-
-
 def transform_airports_to_silver(chunk_size: int = CHUNK_SIZE) -> dict[str, int]:
     """
     Incrementally promote bronze.airports_raw to silver.airports.
@@ -118,15 +112,17 @@ def transform_airports_to_silver(chunk_size: int = CHUNK_SIZE) -> dict[str, int]
 
             df = _transform_batch(list(rows))
 
-            if not df.empty:
-                records = _df_to_records(df)
-                conn.execute(_UPSERT_SQL, records)
-                total_upserted += len(records)
+            with conn.begin():
+                if not df.empty:
+                    records = _df_to_records(df)
+                    conn.execute(_UPSERT_SQL, records)
+                    total_upserted += len(records)
 
-            last_id = rows[-1]["id"]
+                last_id = rows[-1]["id"]
+                update_cursor(conn, CURSOR_KEY, last_id)
+
             total_read += len(rows)
             chunks += 1
-
             logger.info(
                 "Chunk %d: read=%d transformed=%d (cursor → %d)",
                 chunks, len(rows), len(df), last_id,

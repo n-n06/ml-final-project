@@ -75,6 +75,21 @@ CREATE TABLE IF NOT EXISTS gold.flight_features (
     flights_dep_same_hour       INTEGER     DEFAULT 0,
     flights_arr_same_hour       INTEGER     DEFAULT 0,
 
+    -- rolling delay stats (route)
+    route_avg_delay_7d       DOUBLE PRECISION,
+    route_avg_delay_30d      DOUBLE PRECISION,
+    route_delay_rate_7d      DOUBLE PRECISION,
+
+    -- rolling delay stats (airline)
+    airline_avg_delay_7d     DOUBLE PRECISION,
+    airline_avg_delay_30d    DOUBLE PRECISION,
+    airline_delay_rate_7d    DOUBLE PRECISION,
+
+    -- rolling delay stats (departure airport)
+    dep_airport_avg_delay_7d     DOUBLE PRECISION,
+    dep_airport_avg_delay_30d    DOUBLE PRECISION,
+    dep_airport_delay_rate_7d    DOUBLE PRECISION,
+
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     PRIMARY KEY (flight_iata, dep_scheduled_utc)
