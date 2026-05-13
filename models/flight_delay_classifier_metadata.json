@@ -143,5 +143,10 @@
     "recall": 0.25862068965517243,
     "f1": 0.3830806065442937,
     "brier": 0.2209181670848188
-  }
+  },
+  "mlflow_registered_model_name": "flight_delay_classifier",
+  "mlflow_model_uri": "models:/m-c121676e78a44bf9abad546eaf0d3183",
+  "mlflow_run_id": "53b8a18c481043c193edb587b9b91ba7",
+  "mlflow_registered_model_version": 3,
+  "mlflow_registered_model_uri": "models:/flight_delay_classifier/3"
 }

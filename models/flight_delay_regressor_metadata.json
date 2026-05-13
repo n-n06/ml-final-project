@@ -75,5 +75,10 @@
     "median_absolute_error": 8.168780979759179,
     "rmse": 68.89478068885214,
     "r2": -0.014023425152126068
-  }
+  },
+  "mlflow_registered_model_name": "flight_delay_regressor",
+  "mlflow_model_uri": "models:/m-0e08252ab0c14d3dba3a1f30f6b6f973",
+  "mlflow_run_id": "1160ef04565144f5b564dcc616dc1962",
+  "mlflow_registered_model_version": 3,
+  "mlflow_registered_model_uri": "models:/flight_delay_regressor/3"
 }
