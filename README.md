@@ -5,8 +5,8 @@ End-to-end flight delay prediction project with offline data ingestion, feature 
 The current project is split into three layers:
 
 - **Data engineering / offline pipeline**: ingestion from aviation APIs, Kafka/Event Hubs, Postgres bronze/silver/gold tables, Airflow DAGs, Terraform for Azure infrastructure.
-- **ML layer**: EDA, Postgres-backed training dataset assembly, MLflow tracking, classifier for `P(delay > 15 minutes)`, and conditional delay-duration regressor.
-- **Inference layer**: FastAPI service over precomputed features from `data/flight_features_cleaned_for_modeling.csv`.
+- **ML layer**: EDA, Postgres-backed cleaned training table, MLflow tracking/model registry, classifier for `P(delay > 15 minutes)`, and conditional delay-duration regressor.
+- **Inference layer**: FastAPI service that loads model artifacts from MLflow and reads prepared flight features from Postgres.
 
 ## Repository Layout
 
@@ -92,10 +92,17 @@ Notebook:
 notebooks/01_eda.ipynb
 ```
 
-Creates:
+Creates a local exploratory output:
 
 ```text
 data/flight_features_cleaned_for_modeling.csv
+```
+
+In the production pipeline, the same EDA-derived cleaning logic is materialized
+by Airflow DAG `01_initial_backfill` into:
+
+```text
+gold.flight_features_cleaned
 ```
 
 The cleaned dataset should keep:
@@ -162,15 +169,15 @@ media/training/03_*.png
 Notebook code is useful for exploration, but repeatable retraining should use the
 CLI entrypoints in `training/`.
 
-By default the CLI now reads training rows directly from Postgres:
+By default the CLI reads already-cleaned training rows directly from Postgres:
 
 ```text
-gold.flight_features
+gold.flight_features_cleaned
 ```
 
-The table is treated as a read-only source. The training code builds the modeling
-`DataFrame` in memory, including the derived temporal, route, rare-category, and
-leakage-safe columns that were previously materialized in the cleaned CSV.
+The raw joined gold table remains `gold.flight_features`. Airflow materializes
+the cleaned modeling table at the end of DAG `01_initial_backfill`; DAG
+`02_model_training` trains from that cleaned table.
 
 Set `DATABASE_URL` in `.env` or pass it on the command line:
 
@@ -183,7 +190,7 @@ Equivalent explicit command:
 ```powershell
 uv run python -m training.train_all `
   --data-source postgres `
-  --postgres-table gold.flight_features
+  --postgres-table gold.flight_features_cleaned
 ```
 
 For local fallback/debug runs only, the old cleaned CSV path is still available:
@@ -208,8 +215,14 @@ data/03_two_stage_metrics.csv
 ```
 
 MLflow is enabled by default. Runs log params, metrics, metadata JSON files, CSV
-metrics, and model artifacts. If `MLFLOW_TRACKING_URI` is not set, local runs are
-written under:
+metrics, model artifacts, and register the active best models as:
+
+```text
+flight_delay_classifier
+flight_delay_regressor
+```
+
+If `MLFLOW_TRACKING_URI` is not set, local runs are written under:
 
 ```text
 mlruns/
@@ -315,6 +328,31 @@ docker compose up -d --build
 
 Airflow webserver uses the port configured by `AIRFLOW_PORT` in `.env`.
 
+### Airflow Model Training DAG
+
+Model retraining is available as a separate manual DAG:
+
+```text
+02_model_training
+```
+
+It does not change or depend on the ETL DAG. It runs:
+
+```powershell
+python -m training.train_all
+```
+
+inside the Airflow container, reads `gold.flight_features_cleaned` from Postgres
+by default, writes local fallback artifacts to `/opt/airflow/models`, writes
+metric CSVs to `/opt/airflow/data`, and logs/registers MLflow models under
+`/opt/airflow/mlruns`.
+
+After changing Airflow dependencies or mounts, rebuild the Airflow services:
+
+```powershell
+docker compose up -d --build airflow-webserver airflow-scheduler
+```
+
 ## Data Engineering Notes
 
 The original data engineering notes are preserved below, cleaned up into commands.
@@ -400,11 +438,17 @@ az eventhubs namespace authorization-rule keys list \
 
 ## FastAPI Inference Layer
 
-The API runs inference over prepared features from:
+The API loads classifier/regressor artifacts from MLflow by default:
 
 ```text
-data/flight_features_cleaned_for_modeling.csv
+MLFLOW_CLASSIFIER_MODEL_URI=models:/flight_delay_classifier/latest
+MLFLOW_REGRESSOR_MODEL_URI=models:/flight_delay_regressor/latest
 ```
+
+`GET /flights/search` and `GET /flights/{row_id}/predict` read prepared features
+from Postgres table `gold.flight_features_cleaned` through `DATABASE_URL`; the
+API no longer depends on local cleaned CSV files. `POST /predict` accepts a
+feature payload directly and only needs the MLflow model artifacts.
 
 It does not call Flightradar, OpenWeather, or NOTAM APIs at request time. Those sources belong to the offline/preprocessing layer; real-time ingestion is future work.
 
