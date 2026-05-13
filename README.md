@@ -5,7 +5,7 @@ End-to-end flight delay prediction project with offline data ingestion, feature 
 The current project is split into three layers:
 
 - **Data engineering / offline pipeline**: ingestion from aviation APIs, Kafka/Event Hubs, Postgres bronze/silver/gold tables, Airflow DAGs, Terraform for Azure infrastructure.
-- **ML layer**: EDA, cleaned modeling dataset, classifier for `P(delay > 15 minutes)`, and conditional delay-duration regressor.
+- **ML layer**: EDA, Postgres-backed training dataset assembly, MLflow tracking, classifier for `P(delay > 15 minutes)`, and conditional delay-duration regressor.
 - **Inference layer**: FastAPI service over precomputed features from `data/flight_features_cleaned_for_modeling.csv`.
 
 ## Repository Layout
@@ -36,6 +36,9 @@ Canonical dependency files:
 - `airflow/requirements-airflow.txt`: separate dependency list used only inside the Airflow Docker image.
 
 There is intentionally no root `requirements.txt`. Adding one would create a second dependency source and can drift from `uv.lock`.
+MLflow tracking is provided through `mlflow-skinny`, which keeps the training
+environment compatible with the project's current `pandas` version while still
+supporting experiment tracking and artifact logging.
 
 Use this for local development:
 
@@ -159,19 +162,37 @@ media/training/03_*.png
 Notebook code is useful for exploration, but repeatable retraining should use the
 CLI entrypoints in `training/`.
 
-Retrain both the classifier and conditional regressor:
+By default the CLI now reads training rows directly from Postgres:
+
+```text
+gold.flight_features
+```
+
+The table is treated as a read-only source. The training code builds the modeling
+`DataFrame` in memory, including the derived temporal, route, rare-category, and
+leakage-safe columns that were previously materialized in the cleaned CSV.
+
+Set `DATABASE_URL` in `.env` or pass it on the command line:
 
 ```powershell
 uv run python -m training.train_all
 ```
 
-This reads:
+Equivalent explicit command:
 
-```text
-data/flight_features_cleaned_for_modeling.csv
+```powershell
+uv run python -m training.train_all `
+  --data-source postgres `
+  --postgres-table gold.flight_features
 ```
 
-And overwrites the model/metric artifacts:
+For local fallback/debug runs only, the old cleaned CSV path is still available:
+
+```powershell
+uv run python -m training.train_all --data-source csv
+```
+
+Retraining overwrites the model/metric artifacts:
 
 ```text
 models/flight_delay_classifier.joblib
@@ -186,12 +207,36 @@ data/03_regressor_metrics.csv
 data/03_two_stage_metrics.csv
 ```
 
+MLflow is enabled by default. Runs log params, metrics, metadata JSON files, CSV
+metrics, and model artifacts. If `MLFLOW_TRACKING_URI` is not set, local runs are
+written under:
+
+```text
+mlruns/
+```
+
+Use a custom tracking backend:
+
+```powershell
+uv run python -m training.train_all `
+  --mlflow-tracking-uri "sqlite:///mlflow.db" `
+  --mlflow-experiment flight-delay-training
+```
+
+Disable MLflow for a quick local check:
+
+```powershell
+uv run python -m training.train_all --no-mlflow
+```
+
 To test retraining without touching checked-in artifacts, redirect outputs:
 
 ```powershell
 uv run python -m training.train_all `
+  --data-source csv `
   --models-dir .tmp/retrain/models `
-  --metrics-dir .tmp/retrain/data
+  --metrics-dir .tmp/retrain/data `
+  --no-mlflow
 ```
 
 The default CLI uses the tuned Random Forest hyperparameters from the saved
@@ -254,6 +299,13 @@ It includes:
 - Kafka
 
 The compose file expects a local `.env` file. Do not commit secrets.
+
+For local training from Postgres, `DATABASE_URL` must point to the pipeline
+database, for example:
+
+```env
+DATABASE_URL=postgresql+psycopg2://USER:PASSWORD@localhost:5432/DB_NAME
+```
 
 Typical local startup:
 

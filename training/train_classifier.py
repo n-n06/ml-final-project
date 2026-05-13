@@ -14,18 +14,26 @@ from sklearn.metrics import f1_score, precision_score, recall_score
 from sklearn.pipeline import Pipeline
 
 from training.common import (
+    DEFAULT_MLFLOW_EXPERIMENT,
     DEFAULT_DELAY_THRESHOLD_MINUTES,
+    DEFAULT_POSTGRES_TABLE,
     FeaturePreparation,
     build_preprocessor,
     chronological_split,
     evaluate_classifier,
     feature_guard_metadata,
     infer_feature_types,
-    load_clean_dataset,
+    load_training_dataset,
+    log_mlflow_artifacts,
+    log_mlflow_metrics,
+    log_mlflow_params,
+    log_mlflow_sklearn_model,
     optional_int,
     prepare_features,
+    resolve_data_source,
     resolve_paths,
     split_metadata,
+    start_mlflow_run,
     training_run_metadata,
     write_json,
 )
@@ -99,6 +107,15 @@ def train_classifier(
     data_path: Path | str | None = None,
     models_dir: Path | str | None = None,
     metrics_dir: Path | str | None = None,
+    data_source: str | None = None,
+    database_url: str | None = None,
+    postgres_table: str = DEFAULT_POSTGRES_TABLE,
+    postgres_query: str | None = None,
+    mlflow_enabled: bool = True,
+    mlflow_tracking_uri: str | None = None,
+    mlflow_experiment: str | None = None,
+    mlflow_run_name: str | None = None,
+    mlflow_nested: bool = False,
     test_size: float = 0.2,
     random_state: int = 42,
     n_estimators: int = 500,
@@ -112,7 +129,15 @@ def train_classifier(
     paths.models_dir.mkdir(parents=True, exist_ok=True)
     paths.metrics_dir.mkdir(parents=True, exist_ok=True)
 
-    df = load_clean_dataset(paths.data_path)
+    resolved_data_source = resolve_data_source(data_source, data_path)
+    dataset = load_training_dataset(
+        paths,
+        data_source=resolved_data_source,
+        database_url=database_url,
+        postgres_table=postgres_table,
+        postgres_query=postgres_query,
+    )
+    df = dataset.frame
     prepared = prepare_features(df)
     split = chronological_split(prepared, test_size=test_size)
     numeric_features, categorical_features = infer_feature_types(split.X_train)
@@ -174,6 +199,7 @@ def train_classifier(
         "test_rows": int(len(split.X_test)),
         "train_delay_rate": float(split.y_class_train.mean()),
         "test_delay_rate": float(split.y_class_test.mean()),
+        "data_source": dataset.source_metadata,
         "feature_columns": split.X_train.columns.tolist(),
         "numeric_features": numeric_features,
         "categorical_features": categorical_features,
@@ -193,6 +219,46 @@ def train_classifier(
     }
     write_json(metadata_path, metadata)
 
+    with start_mlflow_run(
+        project_dir=paths.project_dir,
+        run_name=mlflow_run_name or "train_classifier",
+        enabled=mlflow_enabled,
+        tracking_uri=mlflow_tracking_uri,
+        experiment_name=mlflow_experiment,
+        nested=mlflow_nested,
+        tags={"stage": "classifier", "data_source": resolved_data_source},
+    ) as mlflow:
+        if mlflow is not None:
+            log_mlflow_params(
+                mlflow,
+                {
+                    "test_size": test_size,
+                    "random_state": random_state,
+                    "model_params": metadata["model_params"],
+                    "data_source": {
+                        "source": dataset.source_metadata.get("source"),
+                        "rows": dataset.source_metadata.get("rows"),
+                        "columns": dataset.source_metadata.get("columns"),
+                        "postgres_table": dataset.source_metadata.get("postgres_table"),
+                    },
+                },
+            )
+            log_mlflow_metrics(mlflow, metrics_05, prefix="threshold_0_50")
+            log_mlflow_metrics(mlflow, metrics_tuned, prefix="threshold_tuned")
+            log_mlflow_metrics(
+                mlflow,
+                {
+                    "train_rows": len(split.X_train),
+                    "test_rows": len(split.X_test),
+                    "train_delay_rate": split.y_class_train.mean(),
+                    "test_delay_rate": split.y_class_test.mean(),
+                    "tuned_threshold": tuned_threshold,
+                },
+                prefix="dataset",
+            )
+            log_mlflow_artifacts(mlflow, [model_path, metadata_path, metrics_path, threshold_metrics_path])
+            log_mlflow_sklearn_model(mlflow, final_model, artifact_path="classifier_model")
+
     return ClassifierTrainingResult(
         model=final_model,
         metadata=metadata,
@@ -210,6 +276,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-path", type=Path, default=None)
     parser.add_argument("--models-dir", type=Path, default=None)
     parser.add_argument("--metrics-dir", type=Path, default=None)
+    parser.add_argument("--data-source", choices=["postgres", "csv"], default=None)
+    parser.add_argument("--database-url", default=None)
+    parser.add_argument("--postgres-table", default=DEFAULT_POSTGRES_TABLE)
+    parser.add_argument("--postgres-query", default=None)
+    parser.add_argument("--mlflow-tracking-uri", default=None)
+    parser.add_argument("--mlflow-experiment", default=DEFAULT_MLFLOW_EXPERIMENT)
+    parser.add_argument("--mlflow-run-name", default=None)
+    parser.add_argument("--no-mlflow", action="store_true")
     parser.add_argument("--test-size", type=float, default=0.2)
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument("--n-estimators", type=int, default=500)
@@ -228,6 +302,14 @@ def main() -> None:
         data_path=args.data_path,
         models_dir=args.models_dir,
         metrics_dir=args.metrics_dir,
+        data_source=args.data_source,
+        database_url=args.database_url,
+        postgres_table=args.postgres_table,
+        postgres_query=args.postgres_query,
+        mlflow_enabled=not args.no_mlflow,
+        mlflow_tracking_uri=args.mlflow_tracking_uri,
+        mlflow_experiment=args.mlflow_experiment,
+        mlflow_run_name=args.mlflow_run_name,
         test_size=args.test_size,
         random_state=args.random_state,
         n_estimators=args.n_estimators,
@@ -245,4 +327,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

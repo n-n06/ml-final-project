@@ -5,12 +5,15 @@ description = "Flight delay prediction data pipeline and ML modeling project"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "alembic>=1.18.4",
     "beautifulsoup4>=4.14.3",
     "confluent-kafka>=2.14.0",
     "fastapi>=0.136.1",
     "matplotlib>=3.10.9",
+    "mlflow-skinny>=3.12.0",
     "numpy>=2.4.4",
     "pandas>=3.0.2",
+    "psycopg2-binary>=2.9.12",
     "pydantic>=2.13.4",
     "python-dotenv>=1.2.2",
     "requests>=2.33.1",

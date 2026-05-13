@@ -15,18 +15,26 @@ from sklearn.metrics import confusion_matrix, mean_absolute_error
 from sklearn.pipeline import Pipeline
 
 from training.common import (
+    DEFAULT_MLFLOW_EXPERIMENT,
     DEFAULT_DELAY_THRESHOLD_MINUTES,
+    DEFAULT_POSTGRES_TABLE,
     build_preprocessor,
     chronological_split,
     evaluate_classifier,
     evaluate_regressor,
     feature_guard_metadata,
     infer_feature_types,
-    load_clean_dataset,
+    load_training_dataset,
+    log_mlflow_artifacts,
+    log_mlflow_metrics,
+    log_mlflow_params,
+    log_mlflow_sklearn_model,
     optional_int,
     prepare_features,
+    resolve_data_source,
     resolve_paths,
     split_metadata,
+    start_mlflow_run,
     training_run_metadata,
     write_json,
 )
@@ -88,6 +96,15 @@ def train_regressor(
     data_path: Path | str | None = None,
     models_dir: Path | str | None = None,
     metrics_dir: Path | str | None = None,
+    data_source: str | None = None,
+    database_url: str | None = None,
+    postgres_table: str = DEFAULT_POSTGRES_TABLE,
+    postgres_query: str | None = None,
+    mlflow_enabled: bool = True,
+    mlflow_tracking_uri: str | None = None,
+    mlflow_experiment: str | None = None,
+    mlflow_run_name: str | None = None,
+    mlflow_nested: bool = False,
     classifier_model: Any | None = None,
     classifier_metadata: dict[str, Any] | None = None,
     test_size: float = 0.2,
@@ -106,7 +123,15 @@ def train_regressor(
     if classifier_model is None or classifier_metadata is None:
         classifier_model, classifier_metadata = load_classifier_artifacts(paths.models_dir)
 
-    df = load_clean_dataset(paths.data_path)
+    resolved_data_source = resolve_data_source(data_source, data_path)
+    dataset = load_training_dataset(
+        paths,
+        data_source=resolved_data_source,
+        database_url=database_url,
+        postgres_table=postgres_table,
+        postgres_query=postgres_query,
+    )
+    df = dataset.frame
     prepared = prepare_features(df)
     split = chronological_split(prepared, test_size=test_size)
     numeric_features, categorical_features = infer_feature_types(split.X_train)
@@ -228,6 +253,7 @@ def train_regressor(
         "selection_metric": "final holdout MAE on actual delayed test rows",
         "train_delayed_rows": int(len(X_reg_train)),
         "test_actual_delayed_rows": int(len(X_reg_test)),
+        "data_source": dataset.source_metadata,
         "feature_columns": split.X_train.columns.tolist(),
         "numeric_features": numeric_features,
         "categorical_features": categorical_features,
@@ -255,6 +281,49 @@ def train_regressor(
     write_json(metadata_path, metadata)
     write_json(two_stage_metadata_path, two_stage_metadata)
 
+    with start_mlflow_run(
+        project_dir=paths.project_dir,
+        run_name=mlflow_run_name or "train_regressor",
+        enabled=mlflow_enabled,
+        tracking_uri=mlflow_tracking_uri,
+        experiment_name=mlflow_experiment,
+        nested=mlflow_nested,
+        tags={"stage": "regressor", "data_source": resolved_data_source},
+    ) as mlflow:
+        if mlflow is not None:
+            log_mlflow_params(
+                mlflow,
+                {
+                    "test_size": test_size,
+                    "random_state": random_state,
+                    "delay_threshold_minutes": delay_threshold_minutes,
+                    "model_params": metadata["model_params"],
+                    "data_source": {
+                        "source": dataset.source_metadata.get("source"),
+                        "rows": dataset.source_metadata.get("rows"),
+                        "columns": dataset.source_metadata.get("columns"),
+                        "postgres_table": dataset.source_metadata.get("postgres_table"),
+                    },
+                },
+            )
+            log_mlflow_metrics(mlflow, final_metrics, prefix="regressor")
+            log_mlflow_metrics(mlflow, classifier_metrics_with_cm, prefix="classifier")
+            log_mlflow_metrics(mlflow, two_stage_metrics, prefix="two_stage")
+            log_mlflow_metrics(
+                mlflow,
+                {
+                    "train_delayed_rows": len(X_reg_train),
+                    "test_actual_delayed_rows": len(X_reg_test),
+                    "test_rows": len(split.X_test),
+                },
+                prefix="dataset",
+            )
+            log_mlflow_artifacts(
+                mlflow,
+                [model_path, metadata_path, two_stage_metadata_path, metrics_path, classifier_metrics_path, two_stage_metrics_path],
+            )
+            log_mlflow_sklearn_model(mlflow, final_regressor, artifact_path="regressor_model")
+
     return RegressorTrainingResult(
         model=final_regressor,
         metadata=metadata,
@@ -273,6 +342,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-path", type=Path, default=None)
     parser.add_argument("--models-dir", type=Path, default=None)
     parser.add_argument("--metrics-dir", type=Path, default=None)
+    parser.add_argument("--data-source", choices=["postgres", "csv"], default=None)
+    parser.add_argument("--database-url", default=None)
+    parser.add_argument("--postgres-table", default=DEFAULT_POSTGRES_TABLE)
+    parser.add_argument("--postgres-query", default=None)
+    parser.add_argument("--mlflow-tracking-uri", default=None)
+    parser.add_argument("--mlflow-experiment", default=DEFAULT_MLFLOW_EXPERIMENT)
+    parser.add_argument("--mlflow-run-name", default=None)
+    parser.add_argument("--no-mlflow", action="store_true")
     parser.add_argument("--test-size", type=float, default=0.2)
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument("--n-estimators", type=int, default=500)
@@ -291,6 +368,14 @@ def main() -> None:
         data_path=args.data_path,
         models_dir=args.models_dir,
         metrics_dir=args.metrics_dir,
+        data_source=args.data_source,
+        database_url=args.database_url,
+        postgres_table=args.postgres_table,
+        postgres_query=args.postgres_query,
+        mlflow_enabled=not args.no_mlflow,
+        mlflow_tracking_uri=args.mlflow_tracking_uri,
+        mlflow_experiment=args.mlflow_experiment,
+        mlflow_run_name=args.mlflow_run_name,
         test_size=args.test_size,
         random_state=args.random_state,
         n_estimators=args.n_estimators,
@@ -309,4 +394,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
