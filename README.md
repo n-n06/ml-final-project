@@ -154,6 +154,50 @@ data/03_*.csv
 media/training/03_*.png
 ```
 
+### CLI Retraining
+
+Notebook code is useful for exploration, but repeatable retraining should use the
+CLI entrypoints in `training/`.
+
+Retrain both the classifier and conditional regressor:
+
+```powershell
+uv run python -m training.train_all
+```
+
+This reads:
+
+```text
+data/flight_features_cleaned_for_modeling.csv
+```
+
+And overwrites the model/metric artifacts:
+
+```text
+models/flight_delay_classifier.joblib
+models/flight_delay_classifier_metadata.json
+models/flight_delay_regressor.joblib
+models/flight_delay_regressor_metadata.json
+models/two_stage_model_metadata.json
+data/02_final_selected_model_metrics.csv
+data/02_threshold_tuning_validation.csv
+data/03_classifier_metrics.csv
+data/03_regressor_metrics.csv
+data/03_two_stage_metrics.csv
+```
+
+To test retraining without touching checked-in artifacts, redirect outputs:
+
+```powershell
+uv run python -m training.train_all `
+  --models-dir .tmp/retrain/models `
+  --metrics-dir .tmp/retrain/data
+```
+
+The default CLI uses the tuned Random Forest hyperparameters from the saved
+artifacts and stores the active `scikit-learn` version in metadata, so API
+inference can detect environment drift.
+
 ## Feature Leakage Rules
 
 Never pass these columns into model `X`:
