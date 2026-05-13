@@ -1,8 +1,6 @@
 import logging
 from typing import Callable
 
-from sqlalchemy import TextClause
-
 from ingestion.config import KafkaConfig
 from pipeline.db import engine
 from pipeline.kafka_consumer import JsonKafkaConsumer
@@ -15,7 +13,7 @@ def drain_topic_to_bronze(
     kafka_config: KafkaConfig,
     topic: str,
     group_id: str,
-    insert_sql: TextClause,
+    insert_sql,
     parse_envelope: Callable[[dict], dict],
     bronze_table: str,
     batch_size: int = 500,
