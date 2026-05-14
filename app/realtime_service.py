@@ -80,31 +80,22 @@ class RealtimeService:
             "status": flight_data.get("status", ""),
         }
 
-        # Route
         features["route"] = f"{features['dep_iata']}-{features['arr_iata']}"
 
-        # Add temporal features
         features.update(self._add_temporal_features())
 
-        # Add airport features
         features.update(self._add_airport_features(features))
 
-        # Add route features
         features.update(self._add_route_features(features))
 
-        # Add NOTAM features (placeholders)
         features.update(self._add_notam_features())
 
-        # Add congestion features (placeholders)
         features.update(self._add_congestion_features())
 
-        # Add rolling stats (placeholders - would need historical data)
         features.update(self._add_rolling_stats())
 
-        # Add grouped categoricals
         features.update(self._add_grouped_categoricals(features))
 
-        # Remove forbidden columns and prepare for prediction
         features = self._prepare_for_prediction(features)
 
         return features
@@ -130,7 +121,7 @@ class RealtimeService:
         arr_airport = MOCK_AIRPORTS.get(arr_iata, {"latitude": 0.0, "longitude": 0.0, "elevation_ft": 0, "iso_country": "UNKNOWN"})
 
         return {
-            "dep_airport_type": "large_airport",  # Assume large airports
+            "dep_airport_type": "large_airport",
             "dep_latitude": dep_airport["latitude"],
             "dep_longitude": dep_airport["longitude"],
             "dep_elevation_ft": dep_airport["elevation_ft"],
@@ -154,7 +145,7 @@ class RealtimeService:
         arr_country = features.get("arr_iso_country", "")
 
         return {
-            "route_distance_km": distance or 1000.0,  # Default distance
+            "route_distance_km": distance or 1000.0,  
             "is_domestic": dep_country == arr_country,
             "is_international": dep_country != arr_country,
         }
@@ -216,8 +207,6 @@ class RealtimeService:
 
     def _group_rare_category(self, value: str, min_count: int) -> str:
         """Group rare categories into 'OTHER'."""
-        # For real-time, we'll assume common values are not rare
-        # In production, this would check against historical data
         common_values = {
             "ALA", "NQZ", "CIT", "GUW", "AKX", "SVO", "IST", "DXB", 
             "KC", "SU", "TK", "EK", "KZ", "RU", "TR", "AE"
@@ -232,14 +221,12 @@ class RealtimeService:
             "dep_terminal", "hour_of_day", "day_of_week", "month", "season",
         }
 
-        # Remove forbidden columns
         prepared = {
             key: value
             for key, value in features.items()
             if key not in forbidden_columns
         }
 
-        # Remove grouped versions if raw versions exist (but they shouldn't at this point)
         grouped_pairs = {
             "dep_iata": "dep_iata_grp",
             "arr_iata": "arr_iata_grp",
@@ -253,7 +240,6 @@ class RealtimeService:
             if raw_col in prepared and grouped_col in prepared:
                 prepared.pop(raw_col, None)
 
-        # Remove _int helper columns
         prepared = {
             key: value
             for key, value in prepared.items()

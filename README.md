@@ -1,11 +1,11 @@
 # Flight Delay Prediction
 
-End-to-end flight delay prediction project with offline data ingestion, feature engineering, ML notebooks, and FastAPI inference over prepared features.
+End-to-end flight delay prediction project with offline data ingestion, feature engineering, ML notebooks and FastAPI inference over prepared features.
 
 The current project is split into three layers:
 
-- **Data engineering / offline pipeline**: ingestion from aviation APIs, Kafka/Event Hubs, Postgres bronze/silver/gold tables, Airflow DAGs, Terraform for Azure infrastructure.
-- **ML layer**: EDA, Postgres-backed cleaned training table, MLflow tracking/model registry, classifier for `P(delay > 15 minutes)`, and conditional delay-duration regressor.
+- **Data engineering / offline pipeline**: ingestion from aviation APIs, Kafka, Postgres bronze/silver/gold tables, Airflow DAGs running locally on Docker Compose.
+- **ML layer**: EDA, Postgres-backed cleaned training table, MLflow tracking/model registry, classifier for `P(delay > 15 minutes)` and conditional delay-duration regressor.
 - **Inference layer**: FastAPI service that loads model artifacts from MLflow and reads prepared flight features from Postgres.
 
 ## Repository Layout
@@ -20,11 +20,118 @@ models/                   Saved model artifacts and metadata
 notebooks/                EDA and model training notebooks
 pipeline/                 Bronze/silver/gold loading and feature building code
 sql/                      Postgres schema/table DDL
-terraform/                Azure infrastructure modules
 docker-compose.yml        Local Postgres, Airflow, and Kafka stack
 flight_features.csv       Current local feature export used by notebooks
 pyproject.toml            Main project dependencies for uv
 uv.lock                   Locked dependency graph for reproducible local env
+```
+
+## Setup 
+> **Very Important Note**: In order to get the most accurate and reliable data, we used a paid API that requires a key to access it. Since we don't want to lose all of our life savings on API calls, we do not provide this key anywhere, so this project is not 100% reproducible locally, unless you go out of your way to buy an Aviation Edge suscription (costs 7$/month). 
+
+
+To run this project locally, clone the repo 
+```
+git clone https://github.com/n-n06/ml-final-project
+cd ml-final-project
+```
+
+Next, set the Environment variable as per your OS
+
+For Windows:
+```
+@"
+AVIATION_EDGE_API_KEY="your_api_key"
+
+# Kafka 
+KAFKA_BOOTSTRAP_SERVERS_EXTERNAL=localhost:9092
+KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+KAFKA_SECURITY_PROTOCOL=PLAINTEXT
+# Topics
+KAFKA_TOPIC_FLIGHTS=flights-raw
+KAFKA_TOPIC_NOTAMS=notams-raw
+KAFKA_TOPIC_WEATHER=weather-raw
+
+# Logging
+LOG_LEVEL=INFO
+LOG_DIR=logs
+
+POSTGRES_USER=flight_db_user
+POSTGRES_PASSWORD=flight_db_pass
+POSTGRES_DB=flight_db
+POSTGRES_PORT=5432
+DATABASE_URL=postgresql+psycopg2://flight_db_user:flight_db_pass@postgres:5432/flight_db
+
+AIRFLOW_PORT=8080
+AIRFLOW_USER=admin
+AIRFLOW_PASSWORD=admin
+AIRFLOW_UID=0
+AIRFLOW_FERNET_KEY=your_airflow_fernet_key
+AIRFLOW_SECRET_KEY="your_airflow_secret_key"
+
+# MLflow
+MLFLOW_PORT=5000
+MLFLOW_SERVER_ALLOWED_HOSTS="*"
+
+# API
+API_PORT=8000
+PGADMIN_EMAIL=admin@example.com
+PGADMIN_PASSWORD=admin123
+
+"@ | Out-File -FilePath .env -Encoding utf8
+```
+
+For Linux / macOS:
+```
+cat > .env << 'EOF'
+AVIATION_EDGE_API_KEY="your_api_key"
+
+# Kafka 
+KAFKA_BOOTSTRAP_SERVERS_EXTERNAL=localhost:9092
+KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+KAFKA_SECURITY_PROTOCOL=PLAINTEXT
+# Topics
+KAFKA_TOPIC_FLIGHTS=flights-raw
+KAFKA_TOPIC_NOTAMS=notams-raw
+KAFKA_TOPIC_WEATHER=weather-raw
+
+# Logging
+LOG_LEVEL=INFO
+LOG_DIR=logs
+
+POSTGRES_USER=flight_db_user
+POSTGRES_PASSWORD=flight_db_pass
+POSTGRES_DB=flight_db
+POSTGRES_PORT=5432
+DATABASE_URL=postgresql+psycopg2://flight_db_user:flight_db_pass@postgres:5432/flight_db
+
+AIRFLOW_PORT=8080
+AIRFLOW_USER=admin
+AIRFLOW_PASSWORD=admin
+AIRFLOW_UID=0
+AIRFLOW_FERNET_KEY=your_airflow_fernet_key
+AIRFLOW_SECRET_KEY="your_airflow_secret_key"
+
+# MLflow
+MLFLOW_PORT=5000
+MLFLOW_SERVER_ALLOWED_HOSTS="*"
+
+# API
+API_PORT=8000
+PGADMIN_EMAIL=admin@example.com
+PGADMIN_PASSWORD=admin123
+EOF
+```
+
+For Linux / macOS, there might be issues with user permissions in the docker containers, so, to avoid that, run
+```bash
+mkdir -p mlruns airflow/logs
+chmod 777 airflow/logs
+```
+
+Next, run `docker compose up -d`:
+```
+docker compose up -d --build
 ```
 
 ## Dependency Management
@@ -37,10 +144,8 @@ Canonical dependency files:
 - `uv.lock`: locks exact resolved versions.
 - `airflow/requirements-airflow.txt`: separate dependency list used only inside the Airflow Docker image.
 
-There is intentionally no root `requirements.txt`. Adding one would create a
-second dependency source and can drift from `uv.lock`.
-MLflow tracking is provided through `mlflow-skinny`, which keeps the training
-environment compatible with the project's current `pandas` version while still
+**uv** is used primarily for local development, while requirements.txt serve as light-weight dependency lists for all Python-based docker services.
+MLflow tracking is provided through `mlflow-skinny`, which keeps the training environment compatible with the project's current `pandas` version while still
 supporting experiment tracking and artifact logging.
 
 Use this for local development:
@@ -56,19 +161,12 @@ uv run python --version
 uv run python -m pipeline.db
 ```
 
-If a deployment platform absolutely requires a pip-style requirements file, export it from the lockfile instead of maintaining it manually:
-
-```powershell
-uv export --format requirements.txt --output-file requirements.txt --no-hashes
-```
-
-Do not commit or hand-edit that exported file unless the deployment target explicitly requires it.
 
 ### Airflow Dependencies
 
 `airflow/requirements-airflow.txt` is not a replacement for `pyproject.toml`.
 
-It is used by `airflow/Dockerfile` with Apache Airflow constraints. Keep Airflow-specific packages there, especially packages that must be installed inside the Airflow container.
+It is used by `airflow/Dockerfile` with Apache Airflow constraints. .
 
 ## Important Environment Rule
 
@@ -80,14 +178,12 @@ pipeline still must be compatible with the runtime. If MLflow model loading fail
 with a dependency or pickle error, retrain/register the models in the same
 environment that will run inference.
 
-Recommended flow:
-
 ```powershell
 uv sync
 uv run python -c "import sklearn; print(sklearn.__version__)"
 ```
 
-Then use the same environment/kernel for notebooks, CLI training, registration,
+Then use the same environment for notebooks, CLI training, registration,
 and backend inference.
 
 ## Current ML Workflow
@@ -359,7 +455,7 @@ It includes:
 - Airflow webserver/scheduler
 - Kafka
 
-The compose file expects a local `.env` file. Do not commit secrets.
+The compose file expects a local `.env` file. 
 
 For local training from Postgres, `DATABASE_URL` must point to the pipeline
 database, for example:
@@ -437,52 +533,6 @@ Cleanup:
 docker compose down -v
 ```
 
-### Azure / Terraform Infrastructure Setup
-
-Terraform configuration lives under `terraform/`. Copy the example variable files
-before applying and never commit real secrets:
-
-```bash
-az login
-cd terraform
-cp terraform.tfvars.example terraform.tfvars
-cp secrets.auto.tfvars.example secrets.auto.tfvars
-```
-
-Initialize, plan, and apply:
-
-```bash
-terraform init
-terraform plan -out=terraform.tfplan
-terraform apply "terraform.tfplan"
-```
-
-If the Azure subscription has provider auto-registration disabled, register the
-providers used by this project:
-
-```bash
-az provider register --namespace Microsoft.Storage
-az provider register --namespace Microsoft.KeyVault
-az provider register --namespace Microsoft.EventHub
-az provider register --namespace Microsoft.Databricks
-az provider register --namespace Microsoft.ContainerRegistry
-az provider register --namespace Microsoft.ManagedIdentity
-az provider register --namespace Microsoft.Network
-az provider register --namespace Microsoft.Compute
-az provider register --namespace Microsoft.Resources
-az provider register --namespace Microsoft.Authorization
-```
-
-Fetch Event Hubs connection string:
-
-```bash
-az eventhubs namespace authorization-rule keys list \
-  --resource-group flightdelay-dev-rg \
-  --namespace-name flightdelay-dev-eh-krd5 \
-  --name RootManageSharedAccessKey \
-  --query primaryConnectionString \
-  -o tsv
-```
 
 ## FastAPI Inference Layer
 
@@ -624,25 +674,3 @@ curl -X POST "http://127.0.0.1:8000/predict/flight" `
   -d '{"flight_iata": "KC123"}'
 ```
 
-## Project Status
-
-Implemented:
-
-- Offline ingestion/pipeline code.
-- SQL schemas for bronze/silver/gold tables.
-- Airflow DAG for initial backfill and cleaned gold materialization.
-- Airflow DAG for manual model retraining from Postgres.
-- Terraform modules for Azure resources.
-- EDA notebook and cleaned modeling dataset.
-- Binary classifier training notebook.
-- Conditional regressor / two-stage evaluation notebook.
-- MLflow experiment tracking and registered classifier/regressor serving.
-- FastAPI inference service over Postgres prepared features.
-- Real-time flight schedule fetching from Aviation Edge API.
-- Real-time flight delay prediction by IATA code with automatic feature engineering.
-
-Not yet implemented:
-
-- Production alerting/notifications. Current alerts are local demo JSON.
-- Automatic FastAPI model/table reload after Airflow refreshes data or models.
-- Full CI/test suite.
