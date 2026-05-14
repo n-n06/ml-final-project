@@ -60,7 +60,11 @@ def enrich_record(
     }
 
 
-def run_ingestion(config: Config) -> dict:
+def run_ingestion(
+    config: Config,
+    start_date: date | None = None,
+    end_date: date | None = None
+) -> dict:
     """
     Runs Ingestion of NOTAMS into Kafka cluster
     From the AviationEdge API
@@ -73,9 +77,11 @@ def run_ingestion(config: Config) -> dict:
     client = AviationEdgeNotamClient(config.aviation_edge)
     producer = JsonKafkaProducer(config.kafka, config.kafka.notams_topic)
 
+    start_date = start_date or config.collection.start_date
+    end_date = end_date or config.collection.end_date
     chunks = list(generate_date_chunks(
-        config.collection.start_date,
-        config.collection.end_date,
+        start_date,
+        end_date,
         config.collection.chunk_size_days,
     ))
 

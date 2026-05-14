@@ -36,7 +36,7 @@ def initial_backfill():
         from sqlalchemy import text
         from pipeline.db import engine
 
-        sql_dir = Path("/opt/airflow/sql")
+        sql_dir = Path("/opt/airflow/sql") # docker compose folder - replace if local run
 
         for script in sorted(sql_dir.glob("[0-9]*.sql")):
             ddl = script.read_text()
@@ -45,10 +45,13 @@ def initial_backfill():
                 for statement in statements:
                     conn.execute(text(statement))
 
+    """
+    Airports 
+    """
     @task
     def ingest_airports() -> str:
         from lib.ingestion_tasks import ingest_airports_task
-        return ingest_airports_task()           # returns csv_path as str
+        return ingest_airports_task() # returns csv path as str
 
     @task
     def bronze_airports(csv_path: str) -> dict:
@@ -59,10 +62,13 @@ def initial_backfill():
     def silver_airports(_: dict) -> dict:
         return task_transform_airports_to_silver()
 
+    """
+    Flights
+    """
     @task
-    def ingest_flights() -> None:
+    def ingest_flights():
         from lib.ingestion_tasks import ingest_flights_task
-        ingest_flights_task()
+        return ingest_flights_task()
 
     @task
     def bronze_flights(_=None) -> dict:
@@ -71,11 +77,14 @@ def initial_backfill():
     @task
     def silver_flights(_: dict) -> dict:
         return task_transform_flights_to_silver()
-
+    
+    """
+    NOTAMs
+    """
     @task
-    def ingest_notams() -> None:
+    def ingest_notams():
         from lib.ingestion_tasks import ingest_notams_task
-        ingest_notams_task()
+        return ingest_notams_task()
 
     @task
     def bronze_notams(_=None) -> dict:
@@ -84,7 +93,10 @@ def initial_backfill():
     @task
     def silver_notams(_: dict) -> dict:
         return task_transform_notams_to_silver()
-
+    
+    """
+    Gold layer - ready dataset
+    """
     @task
     def build_gold_all(_airports, _flights, _notams) -> dict:
         from datetime import date, timedelta

@@ -70,7 +70,11 @@ def enrich_record(
     }
 
 
-def run_ingestion(config: Config) -> dict:
+def run_ingestion(
+    config: Config,
+    start_date: date | None = None,
+    end_date: date | None = None
+) -> dict:
     """
     Runs Ingestion of flights into Kafka cluster from AviationEdge.
     Main loop: airports X directions X date chunks 
@@ -83,9 +87,12 @@ def run_ingestion(config: Config) -> dict:
     client = AviationEdgeClient(config.aviation_edge)
     producer = JsonKafkaProducer(config.kafka, config.kafka.flights_topic)
 
+
+    start_date = start_date or config.collection.start_date
+    end_date = end_date or config.collection.end_date
     chunks = list(generate_date_chunks(
-        config.collection.start_date,
-        config.collection.end_date,
+        start_date,
+        end_date,
         config.collection.chunk_size_days,
     ))
 
