@@ -17,6 +17,7 @@ from sklearn.pipeline import Pipeline
 from training.common import (
     DEFAULT_MLFLOW_EXPERIMENT,
     DEFAULT_DELAY_THRESHOLD_MINUTES,
+    DEFAULT_REGRESSOR_REGISTERED_MODEL,
     DEFAULT_POSTGRES_TABLE,
     build_preprocessor,
     chronological_split,
@@ -115,6 +116,7 @@ def train_regressor(
     min_samples_split: int = 5,
     max_features: str | None = "log2",
     delay_threshold_minutes: float = DEFAULT_DELAY_THRESHOLD_MINUTES,
+    registered_model_name: str | None = DEFAULT_REGRESSOR_REGISTERED_MODEL,
 ) -> RegressorTrainingResult:
     paths = resolve_paths(project_dir, data_path, models_dir, metrics_dir)
     paths.models_dir.mkdir(parents=True, exist_ok=True)
@@ -251,6 +253,7 @@ def train_regressor(
         "target_transform": "log1p during fit, expm1 during predict via TransformedTargetRegressor",
         "selected_model": selected_regressor_name,
         "selection_metric": "final holdout MAE on actual delayed test rows",
+        "mlflow_registered_model_name": registered_model_name,
         "train_delayed_rows": int(len(X_reg_train)),
         "test_actual_delayed_rows": int(len(X_reg_test)),
         "data_source": dataset.source_metadata,
@@ -318,11 +321,20 @@ def train_regressor(
                 },
                 prefix="dataset",
             )
+            model_info = log_mlflow_sklearn_model(
+                mlflow,
+                final_regressor,
+                artifact_path="regressor_model",
+                registered_model_name=registered_model_name,
+            )
+            metadata["mlflow_model_uri"] = getattr(model_info, "model_uri", None)
+            two_stage_metadata["regressor"] = metadata
+            write_json(metadata_path, metadata)
+            write_json(two_stage_metadata_path, two_stage_metadata)
             log_mlflow_artifacts(
                 mlflow,
                 [model_path, metadata_path, two_stage_metadata_path, metrics_path, classifier_metrics_path, two_stage_metrics_path],
             )
-            log_mlflow_sklearn_model(mlflow, final_regressor, artifact_path="regressor_model")
 
     return RegressorTrainingResult(
         model=final_regressor,
@@ -358,6 +370,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-samples-split", type=int, default=5)
     parser.add_argument("--max-features", default="log2")
     parser.add_argument("--delay-threshold-minutes", type=float, default=DEFAULT_DELAY_THRESHOLD_MINUTES)
+    parser.add_argument("--registered-model-name", default=DEFAULT_REGRESSOR_REGISTERED_MODEL)
     return parser.parse_args()
 
 
@@ -384,6 +397,7 @@ def main() -> None:
         min_samples_split=args.min_samples_split,
         max_features=args.max_features,
         delay_threshold_minutes=args.delay_threshold_minutes,
+        registered_model_name=args.registered_model_name,
     )
     print("Saved regressor:", result.model_path)
     print("Saved metadata:", result.metadata_path)

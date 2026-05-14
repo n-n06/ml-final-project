@@ -58,3 +58,10 @@ def task_build_gold(**context) -> dict:
     stats = build_flight_features(processing_date, lookback_days=1, history_days=30)
     logger.info("gold features: %s", stats)
     return stats
+
+
+def task_clean_gold_for_modeling() -> dict:
+    from pipeline.gold.clean_flight_features import clean_flight_features_for_modeling
+    stats = clean_flight_features_for_modeling()
+    logger.info("cleaned modeling features: %s", stats)
+    return stats

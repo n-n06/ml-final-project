@@ -17,8 +17,10 @@ RUN pip install --no-cache-dir \
     --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.10.3/constraints-3.11.txt" \
     -r /requirements-airflow.txt
 
-# Copy your ingestion package
+# Copy local packages used by DAG tasks. Compose volumes override these in local dev.
 COPY --chown=airflow:root ingestion /opt/airflow/ingestion
+COPY --chown=airflow:root pipeline /opt/airflow/pipeline
+COPY --chown=airflow:root training /opt/airflow/training
 
 
 ENV PYTHONPATH=/opt/airflow:/home/airflow/.local/lib/python3.11/site-packages

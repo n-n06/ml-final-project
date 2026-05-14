@@ -38,8 +38,10 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 CSV_DATA_SOURCE = "csv"
 POSTGRES_DATA_SOURCE = "postgres"
 DEFAULT_DATA_SOURCE = POSTGRES_DATA_SOURCE
-DEFAULT_POSTGRES_TABLE = "gold.flight_features"
+DEFAULT_POSTGRES_TABLE = "gold.flight_features_cleaned"
 DEFAULT_MLFLOW_EXPERIMENT = "flight-delay-training"
+DEFAULT_CLASSIFIER_REGISTERED_MODEL = "flight_delay_classifier"
+DEFAULT_REGRESSOR_REGISTERED_MODEL = "flight_delay_regressor"
 TARGET_CLASS = "is_delayed"
 TARGET_REGRESSION = "dep_delay_min"
 TIME_COLUMN = "dep_scheduled_utc"
@@ -167,12 +169,11 @@ def load_training_dataset(
             ),
         )
 
-    raw_df, postgres_metadata = load_gold_features_from_postgres(
+    df, postgres_metadata = load_gold_features_from_postgres(
         database_url=database_url,
         table_name=postgres_table,
         query=postgres_query,
     )
-    df = build_modeling_dataset_from_gold(raw_df)
     df = validate_training_dataset(df)
     return TrainingDataset(
         frame=df,
@@ -387,25 +388,28 @@ def normalize_bool_like_columns(df: pd.DataFrame) -> None:
 
 
 def normalize_bool_like_series(series: pd.Series) -> pd.Series:
-    if series.dtype == "object" or str(series.dtype).startswith(("string", "category")):
-        normalized = series.map(
-            lambda value: {
-                "t": 1,
-                "true": 1,
-                "1": 1,
-                "yes": 1,
-                "y": 1,
-                "f": 0,
-                "false": 0,
-                "0": 0,
-                "no": 0,
-                "n": 0,
-            }.get(str(value).strip().lower(), np.nan)
-            if pd.notna(value)
-            else np.nan
-        )
-        return pd.to_numeric(normalized, errors="coerce").astype("Int64")
-    return series.astype("Int64")
+    if pd.api.types.is_bool_dtype(series):
+        return series.astype("Int64")
+    if pd.api.types.is_numeric_dtype(series):
+        return pd.to_numeric(series, errors="coerce").astype("Int64")
+
+    normalized = series.map(
+        lambda value: {
+            "t": 1,
+            "true": 1,
+            "1": 1,
+            "yes": 1,
+            "y": 1,
+            "f": 0,
+            "false": 0,
+            "0": 0,
+            "no": 0,
+            "n": 0,
+        }.get(str(value).strip().lower(), np.nan)
+        if pd.notna(value)
+        else np.nan
+    )
+    return pd.to_numeric(normalized, errors="coerce").astype("Int64")
 
 
 def fill_notam_missing_values(df: pd.DataFrame) -> None:
@@ -491,11 +495,7 @@ def drop_constant_and_helper_columns(
             near_constant_cols.append(column)
 
     df = df.drop(columns=constant_cols + near_constant_cols)
-    helper_int_cols = [
-        column
-        for column in df.columns
-        if column.endswith("_int") and (column == "is_delayed_int" or column[:-4] in df.columns)
-    ]
+    helper_int_cols = [column for column in df.columns if column.endswith("_int")]
     return df.drop(columns=helper_int_cols)
 
 
@@ -560,9 +560,7 @@ def prepare_features(df: pd.DataFrame, near_constant_threshold: float = 0.995) -
     ]
     X_all = X_all.drop(columns=raw_cols_to_drop)
 
-    duplicate_int_cols = [
-        column for column in X_all.columns if column.endswith("_int") and column[:-4] in X_all.columns
-    ]
+    duplicate_int_cols = [column for column in X_all.columns if column.endswith("_int")]
     X_all = X_all.drop(columns=duplicate_int_cols)
 
     for column in X_all.columns:
@@ -749,6 +747,7 @@ def feature_guard_metadata(prepared: FeaturePreparation) -> dict[str, Any]:
     return {
         "dropped_forbidden_columns": prepared.present_forbidden,
         "dropped_raw_high_cardinality_columns": prepared.raw_cols_to_drop,
+        "dropped_helper_int_columns": prepared.duplicate_int_cols,
         "dropped_duplicate_int_columns": prepared.duplicate_int_cols,
         "dropped_constant_columns": prepared.constant_cols,
         "dropped_near_constant_columns": prepared.near_constant_cols,
@@ -849,10 +848,19 @@ def log_mlflow_artifacts(mlflow: Any, paths: list[Path]) -> None:
             mlflow.log_artifact(str(path))
 
 
-def log_mlflow_sklearn_model(mlflow: Any, model: Any, artifact_path: str) -> None:
+def log_mlflow_sklearn_model(
+    mlflow: Any,
+    model: Any,
+    artifact_path: str,
+    registered_model_name: str | None = None,
+) -> Any:
     import mlflow.sklearn
 
-    mlflow.sklearn.log_model(model, name=artifact_path)
+    return mlflow.sklearn.log_model(
+        model,
+        artifact_path=artifact_path,
+        registered_model_name=registered_model_name,
+    )
 
 
 def flatten_mapping(

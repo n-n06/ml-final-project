@@ -35,6 +35,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument("--classifier-n-estimators", type=int, default=500)
     parser.add_argument("--classifier-max-depth", type=optional_int, default=6)
+    parser.add_argument("--precision-min-recall", type=float, default=0.25)
+    parser.add_argument("--precision-min-predicted-positive-rate", type=float, default=0.03)
     parser.add_argument("--regressor-n-estimators", type=int, default=500)
     parser.add_argument("--regressor-max-depth", type=optional_int, default=15)
     return parser.parse_args()
@@ -71,6 +73,8 @@ def main() -> None:
             random_state=args.random_state,
             n_estimators=args.classifier_n_estimators,
             max_depth=args.classifier_max_depth,
+            precision_min_recall=args.precision_min_recall,
+            precision_min_predicted_positive_rate=args.precision_min_predicted_positive_rate,
         )
         regressor_result = train_regressor(
             project_dir=args.project_dir,
@@ -102,6 +106,8 @@ def main() -> None:
                     "random_state": args.random_state,
                     "classifier_n_estimators": args.classifier_n_estimators,
                     "classifier_max_depth": args.classifier_max_depth,
+                    "precision_min_recall": args.precision_min_recall,
+                    "precision_min_predicted_positive_rate": args.precision_min_predicted_positive_rate,
                     "regressor_n_estimators": args.regressor_n_estimators,
                     "regressor_max_depth": args.regressor_max_depth,
                     "data_source": resolved_data_source,
