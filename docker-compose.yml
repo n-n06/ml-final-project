@@ -16,7 +16,8 @@ x-airflow-common: &airflow-common
     AIRFLOW__WEBSERVER__SECRET_KEY: "${AIRFLOW_SECRET_KEY}"
     AIRFLOW_CONN_PIPELINE_POSTGRES: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-    MLFLOW_TRACKING_URI: file:///opt/airflow/mlruns
+    MLFLOW_TRACKING_URI: http://mlflow:5000     # changed from file:// — all training runs log to the server
+    MLFLOW_EXPERIMENT_NAME: flight-delay-training
     BATCH_SIZE: "500"
     SSL_CA_LOCATION: /etc/ssl/certs/ca-certificates.crt
   volumes:
@@ -26,7 +27,6 @@ x-airflow-common: &airflow-common
     - ./ingestion:/opt/airflow/ingestion
     - ./training:/opt/airflow/training
     - ./models:/opt/airflow/models
-    - ./mlruns:/opt/airflow/mlruns
     - ./airflow/logs:/opt/airflow/logs
     - ./airflow/plugins:/opt/airflow/plugins
     - ./data:/opt/airflow/data
@@ -52,6 +52,35 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  mlflow:
+    build:
+      context: .
+      dockerfile: mlflow/Dockerfile
+    container_name: mlflow
+    env_file:
+      - .env
+    command: >
+      mlflow server
+      --backend-store-uri postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/mlflow
+      --artifacts-destination /opt/mlflow/artifacts
+      --serve-artifacts
+      --host 0.0.0.0
+      --port 5000
+    volumes:
+      - ./mlruns:/opt/mlflow/artifacts   
+    ports:
+      - "${MLFLOW_PORT:-5000}:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:5000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
 
   airflow-init:
     <<: *airflow-common
@@ -97,7 +126,41 @@ services:
     depends_on:
       airflow-init:
         condition: service_completed_successfully
+      mlflow:
+        condition: service_healthy   # training tasks need the MLflow server up
     restart: always
+
+  api:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+    container_name: api
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MODEL_ARTIFACT_SOURCE: auto           # tries MLflow first, falls back to local .joblib
+      API_FEATURE_TABLE: gold.flight_features_cleaned
+      PYTHONPATH: /service
+    volumes:
+      - ./app:/service/app                  # live reload picks up code changes
+      - ./models:/service/models            # local .joblib fallback
+      - ./data:/service/data                # alerts file at data/demo_alerts.json
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
 
   kafka:
     image: confluentinc/cp-kafka:7.5.0
@@ -108,37 +171,23 @@ services:
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,INTERNAL://0.0.0.0:9094
-
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,INTERNAL://kafka:9094
-
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT
-
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
-
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "kafka-topics --bootstrap-server localhost:9092 --list > /dev/null 2>&1"
-        ]
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list > /dev/null 2>&1"]
       interval: 10s
       timeout: 10s
       retries: 10
       start_period: 20s
-
     restart: unless-stopped
 
 volumes:

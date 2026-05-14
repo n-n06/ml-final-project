@@ -25,7 +25,7 @@ _DEFAULT_ARGS = {
         "postgres_table": "gold.flight_features_cleaned",
         "models_dir": "/opt/airflow/models",
         "metrics_dir": "/opt/airflow/data",
-        "mlflow_tracking_uri": "file:///opt/airflow/mlruns",
+        "mlflow_tracking_uri": "http://mlflow:5000",
         "mlflow_experiment": "flight-delay-training",
         "classifier_n_estimators": Param(500, type="integer", minimum=1),
         "classifier_max_depth": Param(6, type=["integer", "null"], minimum=1),
