@@ -8,6 +8,7 @@ RUN apt-get update \
 
 RUN pip install --no-cache-dir \
     fastapi \
+    starlette \
     "uvicorn[standard]" \
     "sqlalchemy>=1.4,<2.0" \
     psycopg2-binary \
@@ -15,7 +16,7 @@ RUN pip install --no-cache-dir \
     numpy \
     joblib \
     mlflow \
-    scikit-learn \
+    scikit-learn==1.5.2 \
     python-dotenv \
     pydantic
 

@@ -53,3 +53,23 @@ class FlightSearchResult(BaseModel):
     route_grp: Any | None = None
     is_delayed: Any | None = None
     dep_delay_min: Any | None = None
+
+
+class FlightTimetableItem(BaseModel):
+    airline: dict[str, Any]
+    arrival: dict[str, Any] | None = None
+    departure: dict[str, Any] | None = None
+    codeshared: dict[str, Any] | None = None
+    flight: dict[str, Any]
+    status: str
+    type: str
+
+
+class TimetableResponse(BaseModel):
+    airport_iata: str
+    flight_type: str
+    flights: list[FlightTimetableItem]
+
+
+class PredictByFlightIataRequest(BaseModel):
+    flight_iata: str = Field(..., description="IATA flight number (e.g., 'AA123')")

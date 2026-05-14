@@ -533,6 +533,8 @@ Implemented endpoints:
 - `POST /predict-batch`
 - `GET /flights/search`
 - `GET /flights/{row_id}/predict`
+- `GET /timetable/{airport_iata}/{flight_type}` - Get real-time flight schedules
+- `POST /predict/flight` - Predict delay for a flight by IATA code
 - `POST /alerts`
 - `GET /alerts`
 
@@ -607,6 +609,21 @@ Run prediction for a row returned by search:
 curl "http://127.0.0.1:8000/flights/0/predict"
 ```
 
+Get real-time flight schedules for Kazakhstan airports:
+
+```powershell
+curl "http://127.0.0.1:8000/timetable/ALA/departure"
+curl "http://127.0.0.1:8000/timetable/NQZ/arrival"
+```
+
+Predict delay for a specific flight by IATA code:
+
+```powershell
+curl -X POST "http://127.0.0.1:8000/predict/flight" `
+  -H "Content-Type: application/json" `
+  -d '{"flight_iata": "KC123"}'
+```
+
 ## Project Status
 
 Implemented:
@@ -621,10 +638,11 @@ Implemented:
 - Conditional regressor / two-stage evaluation notebook.
 - MLflow experiment tracking and registered classifier/regressor serving.
 - FastAPI inference service over Postgres prepared features.
+- Real-time flight schedule fetching from Aviation Edge API.
+- Real-time flight delay prediction by IATA code with automatic feature engineering.
 
 Not yet implemented:
 
-- Real-time external API ingestion inside the backend.
 - Production alerting/notifications. Current alerts are local demo JSON.
 - Automatic FastAPI model/table reload after Airflow refreshes data or models.
 - Full CI/test suite.

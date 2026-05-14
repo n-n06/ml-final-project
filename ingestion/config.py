@@ -13,6 +13,7 @@ class AviationEdgeConfig:
     api_key: str = os.environ["AVIATION_EDGE_API_KEY"]
     base_url: str = "https://aviation-edge.com/v2/public"
     flights_history_endpoint: str = "/flightsHistory"
+    timetable_endpoint: str = "/timetable"
     notams_endpoint: str = "/notams"   
     request_timeout_sec: int = 120
     request_delay_sec: float = 0.5

@@ -100,6 +100,122 @@ class AviationEdgeClient:
             )
             return None
 
+    def fetch_timetable(
+        self,
+        airport_iata: str,
+        flight_type: str,
+    ) -> Optional[list[dict]]:
+        """
+        Fetch real-time flight timetable for one airport + direction
+
+        Returns:
+            List of raw flight dicts (API response), or None on failure.
+        """
+
+        url = f"{self._config.base_url}{self._config.timetable_endpoint}"
+        params = {
+            "key": self._config.api_key,
+            "iataCode": airport_iata,
+            "type": flight_type,
+        }
+
+        logger.info(
+            "Requesting timetable for %s %s",
+            airport_iata, flight_type,
+        )
+
+        try:
+            resp = self._session.get(
+                url, params=params, timeout=self._config.request_timeout_sec
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+
+            if isinstance(payload, dict) and "error" in payload:
+                logger.error(
+                    "API error for %s %s: %s",
+                    airport_iata, flight_type,
+                    payload.get("error"),
+                )
+                return None
+
+            if not isinstance(payload, list):
+                logger.warning(
+                    "Unexpected response type for %s %s: %s",
+                    airport_iata, flight_type, type(payload).__name__,
+                )
+                return None
+
+            logger.info(
+                "Received %d flights for %s %s",
+                len(payload), airport_iata, flight_type,
+            )
+            return payload
+
+        except requests.RequestException as e:
+            logger.exception(
+                "Request failed for %s %s: %s",
+                airport_iata, flight_type, e,
+            )
+            return None
+
+    def fetch_flight_details(
+        self,
+        flight_iata: str,
+    ) -> Optional[dict]:
+        """
+        Fetch details for a specific flight
+
+        Returns:
+            Flight dict (API response), or None on failure.
+        """
+
+        url = f"{self._config.base_url}{self._config.timetable_endpoint}"
+        params = {
+            "key": self._config.api_key,
+            "flight_iata": flight_iata,
+        }
+
+        logger.info(
+            "Requesting flight details for %s",
+            flight_iata,
+        )
+
+        try:
+            resp = self._session.get(
+                url, params=params, timeout=self._config.request_timeout_sec
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+
+            if isinstance(payload, dict) and "error" in payload:
+                logger.error(
+                    "API error for flight %s: %s",
+                    flight_iata,
+                    payload.get("error"),
+                )
+                return None
+
+            if not isinstance(payload, list) or len(payload) == 0:
+                logger.warning(
+                    "No flight found for %s",
+                    flight_iata,
+                )
+                return None
+
+            logger.info(
+                "Received flight details for %s",
+                flight_iata,
+            )
+            return payload[0]
+
+        except requests.RequestException as e:
+            logger.exception(
+                "Request failed for flight %s: %s",
+                flight_iata, e,
+            )
+            return None
+
     def throttle(self) -> None:
         """
         Enforce rate limit between calls
