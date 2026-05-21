@@ -1,0 +1,10 @@
+{
+	"name": "pipeline-dev-adf",
+	"properties": {
+		"trustModeClaimForMi": {
+			"value": "Enabled",
+			"editable": true
+		}
+	},
+	"location": "westeurope"
+}
