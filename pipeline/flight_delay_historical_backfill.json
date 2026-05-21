@@ -1,0 +1,25 @@
+{
+	"name": "flight_delay_historical_backfill",
+	"properties": {
+		"description": "Extracts, transforms and loads flight data from April 10th, 2026 to May 10th, 2026",
+		"activities": [
+			{
+				"name": "Azure Function1",
+				"type": "AzureFunctionActivity",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"method": "POST"
+				}
+			}
+		],
+		"annotations": []
+	}
+}
